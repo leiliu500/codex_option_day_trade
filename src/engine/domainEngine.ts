@@ -2,10 +2,14 @@ import type { AppConfig } from "../config/config";
 import type { EventFactory } from "../domain/events";
 import type { LiveState } from "../domain/state";
 import type { EventEnvelope, RiskDecision, Signal, SignalDirection, TradeAction } from "../domain/types";
+import type { SignalCandidate } from "../domain/signalTypes";
 import type { EventStore } from "../data/eventStore";
 import type { ExecutionAdapter } from "../broker/protocols";
-import { secondsBetweenIso } from "../util/time";
+import { isEtBetween, secondsBetweenIso } from "../util/time";
 import { SignalEngine } from "./signalEngine";
+import { FeatureEngine } from "./featureEngine";
+import { RegimeEngine } from "../domain/regimeEngine";
+import { CandidateRanker } from "./candidateRanker";
 import { ContractSelector } from "./contractSelector";
 import { RiskEngine } from "./riskEngine";
 import { ExecutionPolicy } from "./executionPolicy";
@@ -23,6 +27,9 @@ export interface DomainEngineOptions {
 
 export class DomainEngine {
   private readonly signalEngine: SignalEngine;
+  private readonly featureEngine: FeatureEngine;
+  private readonly regimeEngine: RegimeEngine;
+  private readonly candidateRanker: CandidateRanker;
   private readonly selector: ContractSelector;
   private readonly riskEngine: RiskEngine;
   private readonly executionPolicy: ExecutionPolicy;
@@ -32,6 +39,9 @@ export class DomainEngine {
 
   constructor(private readonly options: DomainEngineOptions) {
     this.signalEngine = new SignalEngine(options.config, options.runId);
+    this.featureEngine = new FeatureEngine(options.config);
+    this.regimeEngine = new RegimeEngine(options.config);
+    this.candidateRanker = new CandidateRanker(options.config);
     this.selector = new ContractSelector(options.config);
     this.riskEngine = new RiskEngine(options.config, options.configHash);
     this.executionPolicy = new ExecutionPolicy(options.config, options.runId);
@@ -62,48 +72,106 @@ export class DomainEngine {
       return;
     }
     for (const underlying of this.options.config.watchlist.underlyings) {
-      const signal = this.signalEngine.evaluateEntry(this.options.state, underlying, nowIso);
-      if (signal.direction === "none") {
-        this.pendingEntryGate.delete(signal.underlying_symbol);
+      if (!this.inEntryWindow(nowIso)) {
+        const signal = this.noTradeSignal(underlying, nowIso, ["outside_entry_window"], {});
+        this.pendingEntryGate.delete(underlying);
         this.appendDecision("decision_no_trade", signal, undefined, undefined, nowIso, {
           reason_codes: signal.reason_codes,
         });
         continue;
       }
-      if (!this.entrySetupIsConfirmed(signal, nowIso)) {
+      const features = this.featureEngine.regimeFeatures(this.options.state, underlying, nowIso);
+      if (!features) {
+        const signal = this.signalEngine.evaluateEntry(this.options.state, underlying, nowIso);
         this.appendDecision("decision_no_trade", signal, undefined, undefined, nowIso, {
-          reason_codes: [...signal.reason_codes, "entry_setup_waiting_for_confirmation"],
+          reason_codes: [...signal.reason_codes, "missing_regime_features"],
         });
         continue;
       }
-      if (!this.entrySetupIsFresh(signal, nowIso)) {
+      const regime = this.regimeEngine.classify(features);
+      if (!regime.tradable) {
+        const signal = this.noTradeSignal(underlying, nowIso, [`regime_${regime.regime}`, ...regime.blockers], features as unknown as Record<string, unknown>);
+        this.pendingEntryGate.delete(underlying);
         this.appendDecision("decision_no_trade", signal, undefined, undefined, nowIso, {
-          reason_codes: [...signal.reason_codes, "entry_setup_not_fresh"],
+          reason_codes: signal.reason_codes,
+          regime,
         });
         continue;
       }
-      const candidates = this.selector.select(signal, this.options.state, nowIso);
-      if (candidates.length === 0) {
+      const generatedCandidates = this.signalEngine.generateCandidates(regime, underlying, this.options.state, nowIso);
+      const annotatedCandidates = this.candidateRanker.annotate(generatedCandidates);
+      const rankedCandidates = this.candidateRanker.rank(generatedCandidates);
+      if (rankedCandidates.length === 0) {
+        const diagnosticCandidate = [...annotatedCandidates].sort((a, b) => b.score - a.score || b.confidence - a.confidence)[0];
+        const signal = diagnosticCandidate
+          ? this.signalEngine.candidateToSignal(diagnosticCandidate)
+          : this.noTradeSignal(underlying, nowIso, [`regime_${regime.regime}`, "no_signal_candidate"], features as unknown as Record<string, unknown>);
+        const reasonCodes = diagnosticCandidate
+          ? [...signal.reason_codes, ...diagnosticCandidate.blockers]
+          : signal.reason_codes;
         this.appendDecision("decision_no_trade", signal, undefined, undefined, nowIso, {
-          reason_codes: ["no_contract_candidate"],
+          reason_codes: reasonCodes,
+          regime,
+          ...(diagnosticCandidate ? { candidate: diagnosticCandidate } : {}),
         });
+        this.pendingEntryGate.delete(underlying);
         continue;
       }
-      const action = this.executionPolicy.buildOpenAction(signal, candidates[0], nowIso);
-      const riskDecision = this.riskEngine.evaluate(action, this.options.state, nowIso, this.options.configHash);
-      this.appendRisk(riskDecision, action, nowIso);
-      if (!riskDecision.approved) {
-        this.appendDecision("decision_blocked", signal, action, riskDecision, nowIso, {
-          selected_contract: candidates[0].contract.symbol,
-          blocked_reasons: riskDecision.blocked_reasons,
+      let submitted = false;
+      let awaitingConfirmation = false;
+      for (const candidate of rankedCandidates) {
+        const signal = this.signalEngine.candidateToSignal(candidate);
+        if (!this.entrySetupIsConfirmed(candidate, signal, nowIso)) {
+          awaitingConfirmation = true;
+          this.appendDecision("decision_no_trade", signal, undefined, undefined, nowIso, {
+            reason_codes: [...signal.reason_codes, "entry_setup_waiting_for_confirmation"],
+            regime,
+            candidate,
+          });
+          continue;
+        }
+        if (!this.entrySetupIsFresh(candidate, signal, nowIso)) {
+          this.appendDecision("decision_no_trade", signal, undefined, undefined, nowIso, {
+            reason_codes: [...signal.reason_codes, "entry_setup_not_fresh"],
+            regime,
+            candidate,
+          });
+          continue;
+        }
+        const contractCandidates = this.selector.select(candidate, this.options.state, nowIso);
+        if (contractCandidates.length === 0) {
+          this.appendDecision("decision_no_trade", signal, undefined, undefined, nowIso, {
+            reason_codes: [...signal.reason_codes, "no_contract_candidate"],
+            regime,
+            candidate,
+          });
+          continue;
+        }
+        const action = this.executionPolicy.buildOpenAction(signal, contractCandidates[0], nowIso);
+        const riskDecision = this.riskEngine.evaluate(action, this.options.state, nowIso, this.options.configHash);
+        this.appendRisk(riskDecision, action, nowIso);
+        if (!riskDecision.approved) {
+          this.appendDecision("decision_blocked", signal, action, riskDecision, nowIso, {
+            selected_contract: contractCandidates[0].contract.symbol,
+            blocked_reasons: riskDecision.blocked_reasons,
+            regime,
+            candidate,
+          });
+          continue;
+        }
+        this.appendDecision("decision_approved", signal, action, riskDecision, nowIso, {
+          selected_contract: contractCandidates[0].contract.symbol,
+          regime,
+          candidate,
         });
-        continue;
+        this.markEntrySetup(candidate, signal, nowIso);
+        await this.submitOrder(action, nowIso);
+        submitted = true;
+        break;
       }
-      this.appendDecision("decision_approved", signal, action, riskDecision, nowIso, {
-        selected_contract: candidates[0].contract.symbol,
-      });
-      this.markEntrySetup(signal, nowIso);
-      await this.submitOrder(action, nowIso);
+      if (!submitted && !awaitingConfirmation) {
+        this.pendingEntryGate.delete(underlying);
+      }
     }
   }
 
@@ -111,7 +179,16 @@ export class DomainEngine {
     return !triggerEvent || triggerEvent.event_type === "underlying_quote" || triggerEvent.event_type === "underlying_bar";
   }
 
-  private entrySetupIsConfirmed(signal: Signal, nowIso: string): boolean {
+  private inEntryWindow(nowIso: string): boolean {
+    return isEtBetween(
+      new Date(nowIso),
+      this.options.config.session.first_entry_time_et,
+      this.options.config.session.last_entry_time_et,
+      this.options.config.system.timezone,
+    );
+  }
+
+  private entrySetupIsConfirmed(candidate: SignalCandidate, signal: Signal, nowIso: string): boolean {
     if (this.options.config.strategy.entry_confirmation_seconds <= 0) {
       return true;
     }
@@ -120,9 +197,16 @@ export class DomainEngine {
       return false;
     }
     const pending = this.pendingEntryGate.get(signal.underlying_symbol);
-    if (!pending || pending.direction !== signal.direction) {
+    if (
+      !pending ||
+      pending.direction !== signal.direction ||
+      pending.regime !== candidate.regime ||
+      pending.setup_type !== candidate.setupType
+    ) {
       this.pendingEntryGate.set(signal.underlying_symbol, {
         direction: signal.direction,
+        regime: candidate.regime,
+        setup_type: candidate.setupType,
         first_seen_at_utc: nowIso,
       });
       return false;
@@ -130,7 +214,7 @@ export class DomainEngine {
     return secondsBetweenIso(pending.first_seen_at_utc, nowIso) >= this.options.config.strategy.entry_confirmation_seconds;
   }
 
-  private entrySetupIsFresh(signal: Signal, nowIso: string): boolean {
+  private entrySetupIsFresh(candidate: SignalCandidate, signal: Signal, nowIso: string): boolean {
     const price = numberOrUndefined(signal.features.price);
     if (price === undefined) {
       return false;
@@ -139,27 +223,73 @@ export class DomainEngine {
     if (!gate || gate.direction !== signal.direction) {
       return true;
     }
-    if (secondsBetweenIso(gate.entered_at_utc, nowIso) < this.options.config.strategy.entry_cooldown_seconds) {
+    const cooldown = this.cooldownSeconds(candidate, gate);
+    if (secondsBetweenIso(gate.entered_at_utc, nowIso) < cooldown) {
       return false;
     }
     const moveBps =
       signal.direction === "bullish"
         ? ((price - gate.entry_price) / gate.entry_price) * 10_000
         : ((gate.entry_price - price) / gate.entry_price) * 10_000;
-    return moveBps >= this.options.config.strategy.min_new_move_bps;
+    return moveBps >= this.minNewMoveBps(candidate);
   }
 
-  private markEntrySetup(signal: Signal, nowIso: string): void {
+  private markEntrySetup(candidate: SignalCandidate, signal: Signal, nowIso: string): void {
     const price = numberOrUndefined(signal.features.price);
     if (price === undefined || (signal.direction !== "bullish" && signal.direction !== "bearish")) {
       return;
     }
     this.entryGate.set(signal.underlying_symbol, {
       direction: signal.direction,
+      regime: candidate.regime,
+      setup_type: candidate.setupType,
       entry_price: price,
       entered_at_utc: nowIso,
     });
     this.pendingEntryGate.delete(signal.underlying_symbol);
+  }
+
+  private cooldownSeconds(candidate: SignalCandidate, gate: EntryGateState): number {
+    if (gate.setup_type && gate.setup_type !== candidate.setupType) {
+      return this.options.config.regime.repeat_entry.different_setup_cooldown_sec;
+    }
+    switch (candidate.regime) {
+      case "GRIND_UP":
+      case "GRIND_DOWN":
+        return this.options.config.regime.repeat_entry.grind_cooldown_sec;
+      case "STRONG_UP":
+      case "STRONG_DOWN":
+      case "WIDE_DIRECTIONAL_UP":
+      case "WIDE_DIRECTIONAL_DOWN":
+      case "GAP_AND_GO_UP":
+      case "GAP_AND_GO_DOWN":
+        return this.options.config.regime.repeat_entry.strong_trend_cooldown_sec;
+      case "REVERSAL_UP":
+      case "REVERSAL_DOWN":
+        return this.options.config.regime.repeat_entry.reversal_cooldown_sec;
+      default:
+        return this.options.config.regime.repeat_entry.default_cooldown_sec;
+    }
+  }
+
+  private minNewMoveBps(candidate: SignalCandidate): number {
+    return candidate.regime === "GRIND_UP" || candidate.regime === "GRIND_DOWN"
+      ? this.options.config.regime.repeat_entry.min_new_move_bps_grind
+      : this.options.config.regime.repeat_entry.min_new_move_bps_default;
+  }
+
+  private noTradeSignal(underlying: string, nowIso: string, reasons: string[], features: Record<string, unknown>): Signal {
+    return {
+      signal_id: `no-trade-${underlying}-${nowIso}-${reasons.join("-")}`,
+      run_id: this.options.runId,
+      strategy_name: this.options.config.strategy.name,
+      underlying_symbol: underlying,
+      direction: "none",
+      confidence: 0,
+      reason_codes: reasons,
+      features,
+      created_at_utc: nowIso,
+    };
   }
 
   private async submitIfApproved(action: TradeAction, nowIso: string): Promise<void> {
@@ -259,12 +389,16 @@ export class DomainEngine {
 
 interface EntryGateState {
   direction: Extract<SignalDirection, "bullish" | "bearish">;
+  regime?: string;
+  setup_type?: string;
   entry_price: number;
   entered_at_utc: string;
 }
 
 interface PendingEntryGateState {
   direction: Extract<SignalDirection, "bullish" | "bearish">;
+  regime?: string;
+  setup_type?: string;
   first_seen_at_utc: string;
 }
 

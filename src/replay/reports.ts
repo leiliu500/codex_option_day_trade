@@ -1,5 +1,6 @@
 import type { EventEnvelope } from "../domain/types";
 import type { LiveState } from "../domain/state";
+import { analyzeMissedOpportunities, type OpportunityVerificationSummary } from "./missedOpportunityAnalyzer";
 
 export interface ReplayReport {
   source_run_id?: string;
@@ -13,6 +14,7 @@ export interface ReplayReport {
   mismatches: string[];
   pnl_simulated: string;
   max_drawdown_simulated: string;
+  opportunity_verification: OpportunityVerificationSummary;
 }
 
 export function buildReplayReport(params: {
@@ -39,5 +41,9 @@ export function buildReplayReport(params: {
     mismatches: params.mismatches ?? [],
     pnl_simulated: params.state.dailyRealizedPnl.toFixed(2),
     max_drawdown_simulated: "0.00",
+    opportunity_verification: analyzeMissedOpportunities({
+      inputEvents: params.inputEvents,
+      outputEvents: params.outputEvents,
+    }),
   };
 }

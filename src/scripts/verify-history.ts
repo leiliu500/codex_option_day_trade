@@ -6,6 +6,7 @@ import { EventFactory } from "../domain/events";
 import type { LiveState } from "../domain/state";
 import type { EventEnvelope, OptionRight } from "../domain/types";
 import type { ReplayReport } from "../replay/reports";
+import { analyzeMissedOpportunities, type OpportunityVerificationSummary } from "../replay/missedOpportunityAnalyzer";
 import { runEventsThroughProductionEngine } from "../replay/replayRunner";
 import { zonedTimeToUtc } from "../util/time";
 import { SimulatedExecutionAdapter } from "../broker/simulatedExecutionAdapter";
@@ -99,6 +100,7 @@ export interface HistoricalVerificationSummary {
   replay: ReplayReport;
   entries_fired: EntryFire[];
   trade_pnl: TradePnlRow[];
+  opportunity_verification: OpportunityVerificationSummary;
   top_blocked_reasons: Record<string, number>;
 }
 
@@ -147,6 +149,7 @@ export async function runHistoricalVerification(params: {
   const { outputEvents, report, state } = replay;
   const entriesFired = buildEntryFires(outputEvents);
   const tradePnl = buildTradePnl(outputEvents, state);
+  const opportunityVerification = analyzeMissedOpportunities({ inputEvents, outputEvents });
   const safeName = `${params.underlying.toUpperCase()}-${params.date}`;
   const eventPath = join("data", "events", `historical-${safeName}.jsonl`);
   const reportPath = join(config.replay.report_dir, `historical-${safeName}.json`);
@@ -169,6 +172,7 @@ export async function runHistoricalVerification(params: {
     replay: report,
     entries_fired: entriesFired,
     trade_pnl: tradePnl,
+    opportunity_verification: opportunityVerification,
     top_blocked_reasons: countBlockedReasons(outputEvents),
   };
   writeFileSync(reportPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");

@@ -1,6 +1,7 @@
 import type {
   EventEnvelope,
   OptionContract,
+  UnderlyingBarPoint,
   OptionQuoteState,
   OrderRecord,
   PositionState,
@@ -26,6 +27,8 @@ export class LiveState {
   readonly streamHealth = new Map<string, StreamHealth>();
   readonly seenEventIds = new Set<string>();
   readonly priceHistory = new Map<string, PricePoint[]>();
+  readonly barHistory = new Map<string, UnderlyingBarPoint[]>();
+  readonly optionMidHistory = new Map<string, PricePoint[]>();
 
   killSwitchEnabled = false;
   newEntriesDisabled = false;
@@ -111,6 +114,13 @@ export class LiveState {
       bid: numberOrUndefined(event.normalized.bid) ?? current.bid,
       ask: numberOrUndefined(event.normalized.ask) ?? current.ask,
       vwap: numberOrUndefined(event.normalized.vwap) ?? current.vwap,
+      previous_close:
+        numberOrUndefined(event.normalized.previous_close ?? event.normalized.prev_close ?? event.normalized.prior_close) ??
+        current.previous_close,
+      session_open:
+        current.session_open ??
+        numberOrUndefined(event.normalized.session_open ?? event.normalized.open_price ?? event.normalized.day_open ?? event.normalized.open),
+      relative_volume: numberOrUndefined(event.normalized.relative_volume) ?? current.relative_volume,
       opening_range_high: numberOrUndefined(event.normalized.opening_range_high) ?? current.opening_range_high,
       opening_range_low: numberOrUndefined(event.normalized.opening_range_low) ?? current.opening_range_low,
       last_event_at_utc: event.event_at_utc ?? event.received_at_utc,
@@ -124,6 +134,24 @@ export class LiveState {
       this.priceHistory.set(
         symbol,
         history.filter((point) => Date.parse(event.received_at_utc) - Date.parse(point.at) <= 30 * 60 * 1000),
+      );
+      const bars = this.barHistory.get(symbol) ?? [];
+      const open = numberOrUndefined(event.normalized.open) ?? next.last_price;
+      const high = numberOrUndefined(event.normalized.high) ?? next.last_price;
+      const low = numberOrUndefined(event.normalized.low) ?? next.last_price;
+      const close = numberOrUndefined(event.normalized.close) ?? next.last_price;
+      bars.push({
+        at: event.received_at_utc,
+        open,
+        high,
+        low,
+        close,
+        vwap: numberOrUndefined(event.normalized.vwap),
+        volume: numberOrUndefined(event.normalized.volume),
+      });
+      this.barHistory.set(
+        symbol,
+        bars.filter((point) => Date.parse(event.received_at_utc) - Date.parse(point.at) <= 120 * 60 * 1000),
       );
     }
     this.underlyings.set(symbol, next);
@@ -178,6 +206,15 @@ export class LiveState {
       received_at_utc: event.received_at_utc,
     };
     this.optionQuotes.set(symbol, next);
+    const mid = optionMid(next);
+    if (mid !== undefined) {
+      const history = this.optionMidHistory.get(symbol) ?? [];
+      history.push({ at: event.received_at_utc, price: mid });
+      this.optionMidHistory.set(
+        symbol,
+        history.filter((point) => Date.parse(event.received_at_utc) - Date.parse(point.at) <= 10 * 60 * 1000),
+      );
+    }
   }
 
   private applyStreamHealth(event: EventEnvelope): void {

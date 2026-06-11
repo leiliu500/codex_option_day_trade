@@ -37,12 +37,25 @@ export interface UnderlyingState {
   bid?: number;
   ask?: number;
   vwap?: number;
+  previous_close?: number;
+  session_open?: number;
+  relative_volume?: number;
   opening_range_high?: number;
   opening_range_low?: number;
   session_high?: number;
   session_low?: number;
   last_event_at_utc?: string;
   last_received_at_utc?: string;
+}
+
+export interface UnderlyingBarPoint {
+  at: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  vwap?: number;
+  volume?: number;
 }
 
 export interface OptionQuoteState {

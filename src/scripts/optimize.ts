@@ -146,9 +146,9 @@ const PROFILES: StrategyProfile[] = [
     },
   },
   {
-    name: "current_45min_range_filter",
+    name: "current_30min_range_filter",
     session: {
-      entry_start_buffer_minutes: 45,
+      entry_start_buffer_minutes: 30,
     },
     strategy: {
       min_underlying_momentum_bps: 15,
