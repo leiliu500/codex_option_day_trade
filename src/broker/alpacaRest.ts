@@ -2,7 +2,7 @@ import type { AppConfig, RuntimeSecrets } from "../config/config";
 import type { MarketDataAdapter, TradingAdapter } from "./protocols";
 import type { EventFactory } from "../domain/events";
 import type { LiveState } from "../domain/state";
-import type { EventEnvelope, OptionContract, TradeAction } from "../domain/types";
+import type { EventEnvelope, OptionContract, TradeAction, UnderlyingState } from "../domain/types";
 
 export class AlpacaRestClient implements MarketDataAdapter, TradingAdapter {
   constructor(
@@ -12,6 +12,24 @@ export class AlpacaRestClient implements MarketDataAdapter, TradingAdapter {
 
   async getAccount(): Promise<Record<string, unknown>> {
     return this.requestJson(`${this.secrets.alpacaBaseUrl}/v2/account`);
+  }
+
+  async getLatestUnderlyingQuote(underlying: string): Promise<UnderlyingState> {
+    const url = new URL(`${this.secrets.alpacaDataUrl}/v2/stocks/${underlying}/quotes/latest`);
+    url.searchParams.set("feed", this.config.alpaca.stock_feed);
+    const payload = await this.requestJson(url.toString());
+    const quote = (payload.quote ?? payload) as Record<string, unknown>;
+    const bid = numberOrUndefined(quote.bp ?? quote.bid_price ?? quote.bid);
+    const ask = numberOrUndefined(quote.ap ?? quote.ask_price ?? quote.ask);
+    const lastPrice = bid !== undefined && ask !== undefined && ask > bid ? (bid + ask) / 2 : bid ?? ask;
+    return {
+      symbol: underlying.toUpperCase(),
+      last_price: lastPrice,
+      bid,
+      ask,
+      last_event_at_utc: typeof quote.t === "string" ? quote.t : undefined,
+      last_received_at_utc: new Date().toISOString(),
+    };
   }
 
   async getOptionContracts(params: {
@@ -45,22 +63,15 @@ export class AlpacaRestClient implements MarketDataAdapter, TradingAdapter {
     return output.slice(0, this.config.universe.max_contracts_per_underlying);
   }
 
-  async getOptionSnapshots(underlying: string, symbols?: string[]): Promise<Record<string, unknown>> {
-    if (symbols?.length) {
-      const url = new URL(`${this.secrets.alpacaDataUrl}/v1beta1/options/snapshots`);
-      url.searchParams.set("symbols", symbols.join(","));
-      return this.requestJson(url.toString());
+  async getOptionSnapshots(_underlying: string, symbols: string[]): Promise<Record<string, unknown>> {
+    const uniqueSymbols = normalizeSymbolList(symbols, this.config.universe.max_contracts_per_underlying);
+    if (uniqueSymbols.length === 0) {
+      return {};
     }
-    const output: Record<string, unknown> = {};
-    let pageToken: string | undefined;
-    do {
-      const url = new URL(`${this.secrets.alpacaDataUrl}/v1beta1/options/snapshots/${underlying}`);
-      if (pageToken) url.searchParams.set("page_token", pageToken);
-      const payload = await this.requestJson(url.toString());
-      Object.assign(output, payload.snapshots ?? payload);
-      pageToken = typeof payload.next_page_token === "string" ? payload.next_page_token : undefined;
-    } while (pageToken);
-    return output;
+    const url = new URL(`${this.secrets.alpacaDataUrl}/v1beta1/options/snapshots`);
+    url.searchParams.set("symbols", uniqueSymbols.join(","));
+    const payload = await this.requestJson(url.toString());
+    return (payload.snapshots ?? payload) as Record<string, unknown>;
   }
 
   async submitOrder(
@@ -122,6 +133,21 @@ export class AlpacaRestClient implements MarketDataAdapter, TradingAdapter {
     ];
   }
 
+  async cancelAllOrders(eventFactory: EventFactory, nowIso: string): Promise<EventEnvelope[]> {
+    const raw = await this.requestJson(`${this.secrets.alpacaBaseUrl}/v2/orders`, { method: "DELETE" });
+    return [
+      eventFactory.next(
+        "orders_cancel_requested",
+        "alpaca_rest",
+        {
+          requested_at_utc: nowIso,
+          raw_count: Array.isArray(raw) ? raw.length : undefined,
+        },
+        { raw: Array.isArray(raw) ? { orders: raw } : raw, received_at_utc: nowIso },
+      ),
+    ];
+  }
+
   private async requestJson(url: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
     if (!this.secrets.alpacaApiKey || !this.secrets.alpacaSecretKey) {
       throw new Error("Missing Alpaca credentials in environment.");
@@ -166,6 +192,25 @@ function normalizeContract(raw: Record<string, unknown>): OptionContract {
     close_price_date: typeof raw.close_price_date === "string" ? raw.close_price_date : undefined,
     raw,
   };
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function normalizeSymbolList(symbols: string[], maxSymbols: number): string[] {
+  const uniqueSymbols = [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean))];
+  if (uniqueSymbols.some((symbol) => symbol === "*" || symbol.includes("*"))) {
+    throw new Error("Wildcard option snapshot requests are not allowed.");
+  }
+  if (uniqueSymbols.length > maxSymbols) {
+    throw new Error(`Refusing to request ${uniqueSymbols.length} option snapshots; max is ${maxSymbols}.`);
+  }
+  return uniqueSymbols;
 }
 
 function redact(text: string): string {

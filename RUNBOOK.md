@@ -7,10 +7,12 @@
 - `ENABLE_LIVE_TRADING=false` unless intentionally running live.
 - `npm test` passes.
 - `lotd check-alpaca --paper` can reach the account.
+- Account status, options approval, and buying power pass startup checks.
 - Event log directory is writable.
 - Kill switch state is known.
 - Universe DTE is `0` to select contracts expiring on the current ET date only.
 - New entries are blocked until 30 minutes after market open.
+- Option stream subscriptions contain selected symbols only, never whole-chain wildcards.
 
 ## During Market
 
@@ -28,6 +30,7 @@
 - Open orders are cancelled before the configured cancel-open-orders time.
 - No option positions remain after close.
 - Replay is run against the recorded event log.
+- Final trade log event is written to the session event log.
 
 ## Emergency
 

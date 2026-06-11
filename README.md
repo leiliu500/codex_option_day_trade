@@ -51,6 +51,8 @@ node dist/src/cli.js replay-fixture tests/replay_fixtures/03_stale_option_quote_
 node dist/src/cli.js run --config configs/paper.yaml --paper --dry-run
 ```
 
+`run --paper` performs the live workflow setup: account checks, buying-power/options approval checks, current underlying quote, current-date option universe, selected-symbol snapshots, selected-symbol option subscriptions, stock stream, option stream, and trade-update stream. Incoming stream events drive the shared `DomainEngine` for signals, contract selection, risk, execution, and exits.
+
 ## Project Layout
 
 ```text
@@ -58,6 +60,7 @@ src/config/      safe YAML config loader, env secret boundary, live-mode guard
 src/domain/      event envelope, trading models, live state cache
 src/data/        JSONL and in-memory event stores
 src/engine/      feature/signal/selector/risk/execution/position/domain engine
+src/engine/liveSessionController.ts  live before-market, market-event, and before-close workflow
 src/broker/      Alpaca REST/WebSocket adapters and simulated execution adapter
 src/replay/      JSONL fixture replay, replay clock, reports, parity helpers
 tests/           unit tests and replay fixtures

@@ -6,8 +6,12 @@ import { assertSafeTradingMode, loadConfig, secretsFromEnv } from "./config/conf
 import { EventFactory } from "./domain/events";
 import { JsonlEventStore } from "./data/eventStore";
 import { AlpacaRestClient } from "./broker/alpacaRest";
+import { AlpacaOptionStreamAdapter, AlpacaStockStreamAdapter, AlpacaTradingStreamAdapter } from "./broker/alpacaStreams";
 import { runReplayFromJsonl } from "./replay/replayRunner";
 import { nowUtcIso } from "./util/time";
+import { LiveState } from "./domain/state";
+import { DomainEngine } from "./engine/domainEngine";
+import { LiveSessionController } from "./engine/liveSessionController";
 
 interface ParsedArgs {
   command: string;
@@ -62,15 +66,48 @@ async function runCommand(args: ParsedArgs): Promise<void> {
     console.log(JSON.stringify({ status: "ok", mode, run_id: runId, config_hash: configHash, event_log: `data/events/${runId}.jsonl` }, null, 2));
     return;
   }
+  const secrets = secretsFromEnv();
+  const client = new AlpacaRestClient(config, secrets);
+  const state = new LiveState(config);
+  const engine = new DomainEngine({
+    runId,
+    configHash,
+    config,
+    state,
+    eventStore: store,
+    eventFactory: factory,
+    executionAdapter: client,
+  });
+  let controller: LiveSessionController;
+  const sink = async (event: Parameters<LiveSessionController["handleMarketEvent"]>[0]) => {
+    await controller.handleMarketEvent(event);
+  };
+  const streams = {
+    stock: new AlpacaStockStreamAdapter(config, secrets, factory, sink, config.watchlist.underlyings),
+    option: new AlpacaOptionStreamAdapter(config, secrets, factory, sink, []),
+    trading: new AlpacaTradingStreamAdapter(config, secrets, factory, sink),
+  };
+  controller = new LiveSessionController(config, state, store, factory, client, client, engine, streams);
+  const initialized = await controller.initializeBeforeMarket(now);
+  const closeoutTimer = controller.scheduleBeforeClose(now);
+  process.once("SIGINT", () => {
+    clearTimeout(closeoutTimer);
+    void controller.shutdownBeforeClose().finally(() => process.exit(0));
+  });
+  process.once("SIGTERM", () => {
+    clearTimeout(closeoutTimer);
+    void controller.shutdownBeforeClose().finally(() => process.exit(0));
+  });
   console.log(
     JSON.stringify(
       {
-        status: "initialized",
+        status: "running",
         mode,
         run_id: runId,
         config_hash: configHash,
         event_log: `data/events/${runId}.jsonl`,
-        note: "Live stream supervisors are adapter-isolated; use check-alpaca before enabling a connected paper session.",
+        candidate_symbols: initialized.candidateSymbols.length,
+        note: "Before-market checks completed, selected option contracts are subscribed, and stream events now drive the shared domain engine.",
       },
       null,
       2,
@@ -141,6 +178,7 @@ function stringFlag(args: ParsedArgs, name: string): string | undefined {
 function printHelp(): void {
   console.log(`lotd commands:
   run --config configs/paper.yaml --paper --dry-run
+  run --config configs/paper.yaml --paper
   check-alpaca --config configs/paper.yaml --paper
   replay-fixture tests/replay_fixtures/02_bullish_signal_risk_approved_order_submitted.jsonl --config configs/paper.yaml
 `);

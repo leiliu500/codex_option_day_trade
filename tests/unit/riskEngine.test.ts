@@ -32,6 +32,18 @@ test("risk gate blocks opening trades during the last 30 minutes before market c
   assert.ok(decision.blocked_reasons.includes("outside_entry_window"));
 });
 
+test("risk gate blocks v1 short option opening legs", () => {
+  const { config, configHash } = loadConfig("configs/paper.yaml");
+  const now = "2026-06-11T14:00:00.000Z";
+  const state = healthyState(config, now, now);
+  const action = openAction(now);
+  action.legs[0].side = "sell";
+  action.legs[0].position_intent = "sell_to_open";
+  const decision = new RiskEngine(config, configHash).evaluate(action, state, now);
+  assert.equal(decision.approved, false);
+  assert.ok(decision.blocked_reasons.includes("naked_or_short_option_not_allowed"));
+});
+
 function healthyState(config: ReturnType<typeof loadConfig>["config"], nowIso: string, optionQuoteIso: string): LiveState {
   const state = new LiveState(config);
   state.underlyings.set("SPY", {

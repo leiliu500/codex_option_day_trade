@@ -28,6 +28,7 @@ export class LiveState {
   readonly priceHistory = new Map<string, PricePoint[]>();
 
   killSwitchEnabled = false;
+  newEntriesDisabled = false;
   brokerReconciliationMismatch = false;
   dailyRealizedPnl = 0;
   tradesToday = 0;
@@ -146,23 +147,35 @@ export class LiveState {
       return;
     }
     const current = this.optionQuotes.get(symbol) ?? { symbol };
+    if (event.event_type === "option_snapshot") {
+      this.optionQuotes.set(symbol, {
+        ...current,
+        implied_volatility: numberOrUndefined(event.normalized.implied_volatility) ?? current.implied_volatility,
+        delta: numberOrUndefined(event.normalized.delta) ?? current.delta,
+        gamma: numberOrUndefined(event.normalized.gamma) ?? current.gamma,
+        theta: numberOrUndefined(event.normalized.theta) ?? current.theta,
+        vega: numberOrUndefined(event.normalized.vega) ?? current.vega,
+        snapshot_at_utc: event.received_at_utc,
+      });
+      return;
+    }
+    if (event.event_type === "option_trade") {
+      this.optionQuotes.set(symbol, {
+        ...current,
+        last_trade_price: numberOrUndefined(event.normalized.last_trade_price ?? event.normalized.price) ?? current.last_trade_price,
+        last_trade_size: numberOrUndefined(event.normalized.last_trade_size ?? event.normalized.size) ?? current.last_trade_size,
+        trade_event_at_utc: event.event_at_utc ?? event.received_at_utc,
+      });
+      return;
+    }
     const next: OptionQuoteState = {
       ...current,
       bid: numberOrUndefined(event.normalized.bid) ?? current.bid,
       ask: numberOrUndefined(event.normalized.ask) ?? current.ask,
       bid_size: numberOrUndefined(event.normalized.bid_size) ?? current.bid_size,
       ask_size: numberOrUndefined(event.normalized.ask_size) ?? current.ask_size,
-      last_trade_price: numberOrUndefined(event.normalized.last_trade_price ?? event.normalized.price) ?? current.last_trade_price,
-      last_trade_size: numberOrUndefined(event.normalized.last_trade_size ?? event.normalized.size) ?? current.last_trade_size,
-      quote_event_at_utc: event.event_type === "option_trade" ? current.quote_event_at_utc : event.event_at_utc ?? event.received_at_utc,
-      trade_event_at_utc: event.event_type === "option_trade" ? event.event_at_utc ?? event.received_at_utc : current.trade_event_at_utc,
+      quote_event_at_utc: event.event_at_utc ?? event.received_at_utc,
       received_at_utc: event.received_at_utc,
-      implied_volatility: numberOrUndefined(event.normalized.implied_volatility) ?? current.implied_volatility,
-      delta: numberOrUndefined(event.normalized.delta) ?? current.delta,
-      gamma: numberOrUndefined(event.normalized.gamma) ?? current.gamma,
-      theta: numberOrUndefined(event.normalized.theta) ?? current.theta,
-      vega: numberOrUndefined(event.normalized.vega) ?? current.vega,
-      snapshot_at_utc: event.event_type === "option_snapshot" ? event.received_at_utc : current.snapshot_at_utc,
     };
     this.optionQuotes.set(symbol, next);
   }
@@ -177,6 +190,9 @@ export class LiveState {
   private applyRiskState(event: EventEnvelope): void {
     if (event.normalized.kill_switch_enabled !== undefined) {
       this.killSwitchEnabled = Boolean(event.normalized.kill_switch_enabled);
+    }
+    if (event.normalized.new_entries_disabled !== undefined) {
+      this.newEntriesDisabled = Boolean(event.normalized.new_entries_disabled);
     }
   }
 

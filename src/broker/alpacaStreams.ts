@@ -49,6 +49,10 @@ export abstract class AlpacaWebSocketStream {
     this.socket.send(JSON.stringify(payload));
   }
 
+  protected isOpen(): boolean {
+    return this.socket?.readyState === WebSocket.OPEN;
+  }
+
   protected authenticate(): void {
     if (this.name === "trading") {
       this.send({ action: "authenticate", data: { key_id: this.secrets.alpacaApiKey, secret_key: this.secrets.alpacaSecretKey } });
@@ -167,11 +171,12 @@ export class AlpacaOptionStreamAdapter extends AlpacaWebSocketStream {
     private symbols: string[],
   ) {
     super(config, secrets, eventFactory, sink, "option");
+    this.symbols = normalizeOptionSymbols(symbols, config.universe.max_contracts_per_underlying);
   }
 
   setSymbols(symbols: string[]): void {
-    this.symbols = symbols;
-    if (symbols.length > 0) {
+    this.symbols = normalizeOptionSymbols(symbols, this.config.universe.max_contracts_per_underlying);
+    if (this.symbols.length > 0 && this.isOpen()) {
       this.subscribe();
     }
   }
@@ -225,7 +230,22 @@ export class AlpacaOptionStreamAdapter extends AlpacaWebSocketStream {
   }
 }
 
+export function normalizeOptionSymbols(symbols: string[], maxSymbols: number): string[] {
+  const selectedSymbols = [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean))];
+  if (selectedSymbols.some((symbol) => symbol === "*" || symbol.includes("*"))) {
+    throw new Error("Wildcard option stream subscriptions are not allowed.");
+  }
+  if (selectedSymbols.length > maxSymbols) {
+    throw new Error(`Refusing to subscribe to ${selectedSymbols.length} option symbols; max is ${maxSymbols}.`);
+  }
+  return selectedSymbols;
+}
+
 export class AlpacaTradingStreamAdapter extends AlpacaWebSocketStream {
+  constructor(config: AppConfig, secrets: RuntimeSecrets, eventFactory: EventFactory, sink: StreamEventSink) {
+    super(config, secrets, eventFactory, sink, "trading");
+  }
+
   protected url(): string {
     const base = this.secrets.alpacaBaseUrl.replace(/^http/, "ws");
     return `${base}/stream`;

@@ -44,6 +44,12 @@ export class RiskEngine {
       blocked.push("kill_switch_enabled");
     }
     if (!isClose) {
+      if (state.newEntriesDisabled) {
+        blocked.push("new_entries_disabled");
+      }
+      if (action.legs.some((leg) => leg.position_intent === "sell_to_open" || leg.position_intent === "buy_to_close")) {
+        blocked.push("naked_or_short_option_not_allowed");
+      }
       if (!isEtBetween(new Date(nowIso), this.config.session.regular_open_et, this.config.session.regular_close_et, this.config.system.timezone)) {
         blocked.push("market_closed");
       }

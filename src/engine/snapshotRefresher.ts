@@ -1,3 +1,4 @@
+import type { AppConfig } from "../config/config";
 import type { EventFactory } from "../domain/events";
 import type { LiveState } from "../domain/state";
 import type { EventStore } from "../data/eventStore";
@@ -5,13 +6,26 @@ import type { MarketDataAdapter } from "../broker/protocols";
 
 export class SnapshotRefresher {
   constructor(
+    private readonly config: AppConfig,
     private readonly marketData: MarketDataAdapter,
     private readonly eventFactory: EventFactory,
     private readonly eventStore: EventStore,
   ) {}
 
   async refreshUnderlying(state: LiveState, underlying: string, nowIso: string): Promise<number> {
-    const snapshots = await this.marketData.getOptionSnapshots(underlying);
+    const symbols = [...state.contracts.values()]
+      .filter((contract) => contract.underlying_symbol === underlying)
+      .map((contract) => contract.symbol)
+      .slice(0, this.config.universe.max_contracts_per_underlying);
+    return this.refreshSymbols(state, underlying, symbols, nowIso);
+  }
+
+  async refreshSymbols(state: LiveState, underlying: string, symbols: string[], nowIso: string): Promise<number> {
+    const selectedSymbols = normalizeSelectedSymbols(symbols, this.config.universe.max_contracts_per_underlying);
+    if (selectedSymbols.length === 0) {
+      return 0;
+    }
+    const snapshots = await this.marketData.getOptionSnapshots(underlying, selectedSymbols);
     let count = 0;
     for (const [symbol, raw] of Object.entries(snapshots)) {
       const normalized = normalizeSnapshot(symbol, raw as Record<string, unknown>);
@@ -26,6 +40,17 @@ export class SnapshotRefresher {
     }
     return count;
   }
+}
+
+function normalizeSelectedSymbols(symbols: string[], maxSymbols: number): string[] {
+  const selectedSymbols = [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean))];
+  if (selectedSymbols.some((symbol) => symbol === "*" || symbol.includes("*"))) {
+    throw new Error("Wildcard option snapshot refresh is not allowed.");
+  }
+  if (selectedSymbols.length > maxSymbols) {
+    throw new Error(`Refusing to refresh ${selectedSymbols.length} option snapshots; max is ${maxSymbols}.`);
+  }
+  return selectedSymbols;
 }
 
 function normalizeSnapshot(symbol: string, raw: Record<string, unknown>): Record<string, unknown> {
