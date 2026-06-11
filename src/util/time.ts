@@ -54,6 +54,41 @@ export function etDateKey(date: Date, timeZone = DEFAULT_TIMEZONE): string {
     .padStart(2, "0")}`;
 }
 
+export function addDaysToDateKey(dateKey: string, days: number): string {
+  const [year, month, day] = parseDateKey(dateKey);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return date.toISOString().slice(0, 10);
+}
+
+export function dateKeyDayDiff(startDateKey: string, endDateKey: string): number {
+  const [startYear, startMonth, startDay] = parseDateKey(startDateKey);
+  const [endYear, endMonth, endDay] = parseDateKey(endDateKey);
+  const start = Date.UTC(startYear, startMonth - 1, startDay);
+  const end = Date.UTC(endYear, endMonth - 1, endDay);
+  return Math.round((end - start) / (24 * 3600 * 1000));
+}
+
+export function clockMinusMinutes(clock: string, minutes: number): string {
+  const daySeconds = 24 * 3600;
+  const target = (secondsFromClock(clock) - minutes * 60 + daySeconds) % daySeconds;
+  return secondsToClock(target);
+}
+
+export function clockPlusMinutes(clock: string, minutes: number): string {
+  const daySeconds = 24 * 3600;
+  const target = (secondsFromClock(clock) + minutes * 60) % daySeconds;
+  return secondsToClock(target);
+}
+
+function secondsToClock(seconds: number): string {
+  const hour = Math.floor(seconds / 3600);
+  const minute = Math.floor((seconds % 3600) / 60);
+  const second = seconds % 60;
+  return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}:${second
+    .toString()
+    .padStart(2, "0")}`;
+}
+
 export function isEtBetween(date: Date, startEt: string, endEt: string, timeZone = DEFAULT_TIMEZONE): boolean {
   const now = secondsSinceMidnightInZone(date, timeZone);
   return now >= secondsFromClock(startEt) && now < secondsFromClock(endEt);
@@ -88,4 +123,12 @@ export function zonedTimeToUtc(dateInZone: Date, clockEt: string, timeZone = DEF
     utc -= observedLocal - targetLocal;
   }
   return new Date(utc);
+}
+
+function parseDateKey(dateKey: string): [number, number, number] {
+  const parts = dateKey.split("-").map((part) => Number.parseInt(part, 10));
+  if (parts.length !== 3 || parts.some((part) => Number.isNaN(part))) {
+    throw new Error(`Invalid date key: ${dateKey}`);
+  }
+  return parts as [number, number, number];
 }

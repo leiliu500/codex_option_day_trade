@@ -9,6 +9,8 @@
 - `lotd check-alpaca --paper` can reach the account.
 - Event log directory is writable.
 - Kill switch state is known.
+- Universe DTE is `0` to select contracts expiring on the current ET date only.
+- New entries are blocked until 30 minutes after market open.
 
 ## During Market
 
@@ -21,7 +23,8 @@
 ## End Of Day
 
 - New entries stop at configured last-entry time.
-- Positions are flattened before the configured force-flatten time.
+- Positions are flattened 30 minutes before the configured market close.
+- New entries remain blocked during the last 30 minutes before market close.
 - Open orders are cancelled before the configured cancel-open-orders time.
 - No option positions remain after close.
 - Replay is run against the recorded event log.

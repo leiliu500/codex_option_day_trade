@@ -4,6 +4,7 @@ import type { EventFactory } from "../domain/events";
 import type { LiveState } from "../domain/state";
 import type { EventStore } from "../data/eventStore";
 import type { OptionContract } from "../domain/types";
+import { addDaysToDateKey, etDateKey } from "../util/time";
 
 export class UniverseBuilder {
   constructor(
@@ -20,6 +21,9 @@ export class UniverseBuilder {
     }
     const minStrike = price * (1 - this.config.universe.strike_window_pct);
     const maxStrike = price * (1 + this.config.universe.strike_window_pct);
+    const nowEtDate = etDateKey(new Date(nowIso), this.config.system.timezone);
+    const expirationDateGte = addDaysToDateKey(nowEtDate, this.config.universe.dte_min);
+    const expirationDateLte = addDaysToDateKey(nowEtDate, this.config.universe.dte_max);
     const contracts: OptionContract[] = [];
     for (const right of ["call", "put"] as const) {
       if (right === "call" && !this.config.universe.include_calls) continue;
@@ -28,6 +32,8 @@ export class UniverseBuilder {
         ...(await this.marketData.getOptionContracts({
           underlying,
           right,
+          expirationDateGte,
+          expirationDateLte,
           strikePriceGte: minStrike,
           strikePriceLte: maxStrike,
         })),

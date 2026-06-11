@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { sha256 } from "../util/hash";
+import { clockMinusMinutes, clockPlusMinutes } from "../util/time";
 import type { TradingMode } from "../domain/types";
 
 export interface AppConfig {
@@ -131,14 +132,14 @@ export const defaultConfig: AppConfig = {
     regular_open_et: "09:30:00",
     regular_close_et: "16:00:00",
     start_streams_at_et: "09:20:00",
-    first_entry_time_et: "09:35:00",
-    last_entry_time_et: "15:15:00",
-    force_flatten_time_et: "15:45:00",
+    first_entry_time_et: "10:00:00",
+    last_entry_time_et: "15:30:00",
+    force_flatten_time_et: "15:30:00",
     cancel_open_orders_time_et: "15:50:00",
   },
   universe: {
     dte_min: 0,
-    dte_max: 7,
+    dte_max: 0,
     strike_window_pct: 0.04,
     max_contracts_per_underlying: 100,
     refresh_interval_seconds: 300,
@@ -250,6 +251,11 @@ export function assertSafeTradingMode(
 
 function normalizeConfig(config: AppConfig): void {
   config.watchlist.underlyings = config.watchlist.underlyings.map((symbol) => symbol.toUpperCase());
+  config.universe.dte_min = 0;
+  config.universe.dte_max = 0;
+  config.session.first_entry_time_et = clockPlusMinutes(config.session.regular_open_et, 30);
+  config.session.last_entry_time_et = clockMinusMinutes(config.session.regular_close_et, 30);
+  config.session.force_flatten_time_et = clockMinusMinutes(config.session.regular_close_et, 30);
   if (config.execution.order_type !== "limit" || config.execution.time_in_force !== "day") {
     throw new Error("v1 only supports limit DAY option orders.");
   }

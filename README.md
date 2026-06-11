@@ -12,9 +12,11 @@ The MVP is intentionally conservative:
 - Paper mode by default.
 - Live mode requires `ENABLE_LIVE_TRADING=true`, `--live`, `system.environment=live`, and `alpaca.paper=false`.
 - Single-leg long calls/puts only.
+- Current-ET-date expirations only, so the default universe is 0DTE.
+- No new entries during the first 30 minutes after market open or the last 30 minutes before market close.
 - Limit DAY orders only.
 - No naked short options.
-- No overnight positions; force flatten logic is part of the position manager.
+- No overnight positions; force flatten starts 30 minutes before market close.
 - JSONL event sourcing for audit and replay.
 
 ## Setup

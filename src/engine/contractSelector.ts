@@ -2,7 +2,7 @@ import type { AppConfig } from "../config/config";
 import type { LiveState } from "../domain/state";
 import type { ContractCandidate, OptionContract, OptionRight, Signal } from "../domain/types";
 import { optionMid } from "../domain/types";
-import { secondsBetweenIso } from "../util/time";
+import { dateKeyDayDiff, etDateKey, secondsBetweenIso } from "../util/time";
 
 export class ContractSelector {
   constructor(private readonly config: AppConfig) {}
@@ -95,11 +95,11 @@ export class ContractSelector {
   }
 
   private expirationInRange(expirationDate: string, nowIso: string): boolean {
-    const expiration = Date.parse(`${expirationDate}T23:59:59Z`);
-    if (Number.isNaN(expiration)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(expirationDate)) {
       return false;
     }
-    const days = Math.floor((expiration - Date.parse(nowIso)) / (24 * 3600 * 1000));
+    const nowEtDate = etDateKey(new Date(nowIso), this.config.system.timezone);
+    const days = dateKeyDayDiff(nowEtDate, expirationDate);
     return days >= this.config.universe.dte_min && days <= this.config.universe.dte_max;
   }
 }

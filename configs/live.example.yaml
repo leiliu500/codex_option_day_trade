@@ -20,14 +20,14 @@ session:
   regular_open_et: "09:30:00"
   regular_close_et: "16:00:00"
   start_streams_at_et: "09:20:00"
-  first_entry_time_et: "09:35:00"
-  last_entry_time_et: "15:15:00"
-  force_flatten_time_et: "15:45:00"
+  first_entry_time_et: "10:00:00"
+  last_entry_time_et: "15:30:00"
+  force_flatten_time_et: "15:30:00"
   cancel_open_orders_time_et: "15:50:00"
 
 universe:
   dte_min: 0
-  dte_max: 7
+  dte_max: 0
   strike_window_pct: 0.04
   max_contracts_per_underlying: 100
   refresh_interval_seconds: 300
