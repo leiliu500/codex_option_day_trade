@@ -44,6 +44,104 @@ test("risk gate blocks v1 short option opening legs", () => {
   assert.ok(decision.blocked_reasons.includes("naked_or_short_option_not_allowed"));
 });
 
+test("risk gate allows defined-risk debit spread mleg when each leg is fresh and covered", () => {
+  const { config, configHash } = loadConfig("configs/paper.yaml");
+  const now = "2026-06-11T14:15:00.000Z";
+  const state = healthyState(config, now, now);
+  state.contracts.set("SPY260611C00105000", {
+    symbol: "SPY260611C00105000",
+    underlying_symbol: "SPY",
+    expiration_date: "2026-06-11",
+    strike_price: 105,
+    right: "call",
+    status: "active",
+    open_interest: 500,
+  });
+  state.optionQuotes.set("SPY260611C00105000", {
+    symbol: "SPY260611C00105000",
+    bid: 0.3,
+    ask: 0.34,
+    received_at_utc: now,
+  });
+  const action = openAction(now);
+  action.strategy_type = "call_debit_spread";
+  action.order_class = "mleg";
+  action.limit_price = 0.62;
+  action.max_loss_dollars = 62;
+  action.legs.push({
+    symbol: "SPY260611C00105000",
+    side: "sell",
+    ratio_qty: 1,
+    position_intent: "sell_to_open",
+  });
+
+  const decision = new RiskEngine(config, configHash).evaluate(action, state, now);
+
+  assert.equal(decision.approved, true);
+  assert.deepEqual(decision.blocked_reasons, []);
+});
+
+test("risk gate blocks credit spreads while credit strategy support is disabled", () => {
+  const { config, configHash } = loadConfig("configs/paper.yaml");
+  const now = "2026-06-11T14:15:00.000Z";
+  const state = healthyState(config, now, now);
+  state.contracts.set("SPY260611P00095000", {
+    symbol: "SPY260611P00095000",
+    underlying_symbol: "SPY",
+    expiration_date: "2026-06-11",
+    strike_price: 95,
+    right: "put",
+    status: "active",
+    open_interest: 500,
+  });
+  state.contracts.set("SPY260611P00090000", {
+    symbol: "SPY260611P00090000",
+    underlying_symbol: "SPY",
+    expiration_date: "2026-06-11",
+    strike_price: 90,
+    right: "put",
+    status: "active",
+    open_interest: 500,
+  });
+  state.optionQuotes.set("SPY260611P00095000", {
+    symbol: "SPY260611P00095000",
+    bid: 0.8,
+    ask: 0.86,
+    received_at_utc: now,
+  });
+  state.optionQuotes.set("SPY260611P00090000", {
+    symbol: "SPY260611P00090000",
+    bid: 0.2,
+    ask: 0.24,
+    received_at_utc: now,
+  });
+  const action = openAction(now);
+  action.strategy_type = "put_credit_spread";
+  action.order_class = "mleg";
+  action.debit_or_credit = "credit";
+  action.limit_price = 0.56;
+  action.max_loss_dollars = 444;
+  action.legs = [
+    {
+      symbol: "SPY260611P00095000",
+      side: "sell",
+      ratio_qty: 1,
+      position_intent: "sell_to_open",
+    },
+    {
+      symbol: "SPY260611P00090000",
+      side: "buy",
+      ratio_qty: 1,
+      position_intent: "buy_to_open",
+    },
+  ];
+
+  const decision = new RiskEngine(config, configHash).evaluate(action, state, now);
+
+  assert.equal(decision.approved, false);
+  assert.ok(decision.blocked_reasons.includes("strategy_disabled"));
+});
+
 test("risk gate treats null risk caps as unlimited for otherwise valid long option entries", () => {
   const { config, configHash } = loadConfig("configs/paper.yaml");
   const now = "2026-06-11T14:15:00.000Z";

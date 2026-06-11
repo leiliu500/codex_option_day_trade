@@ -8,7 +8,7 @@ import { JsonlEventStore } from "./data/eventStore";
 import { AlpacaRestClient } from "./broker/alpacaRest";
 import { AlpacaOptionStreamAdapter, AlpacaStockStreamAdapter, AlpacaTradingStreamAdapter } from "./broker/alpacaStreams";
 import { runReplayFromJsonl } from "./replay/replayRunner";
-import { nowUtcIso } from "./util/time";
+import { formatZonedIso, nowUtcIso } from "./util/time";
 import { LiveState } from "./domain/state";
 import { DomainEngine } from "./engine/domainEngine";
 import { LiveSessionController } from "./engine/liveSessionController";
@@ -47,8 +47,9 @@ async function runCommand(args: ParsedArgs): Promise<void> {
   const runId = randomUUID();
   mkdirSync("data/events", { recursive: true });
   const store = new JsonlEventStore(join("data/events", `${runId}.jsonl`));
-  const factory = new EventFactory(runId);
+  const factory = new EventFactory(runId, config.system.timezone);
   const now = nowUtcIso();
+  const nowEt = formatZonedIso(now, config.system.timezone);
   store.append(
     factory.next(
       "session_started",
@@ -57,13 +58,31 @@ async function runCommand(args: ParsedArgs): Promise<void> {
         run_id: runId,
         mode,
         config_hash: configHash,
+        timezone: config.system.timezone,
+        started_at_utc: now,
+        started_at_et: nowEt,
         dry_run: Boolean(args.flags["dry-run"]),
       },
       { received_at_utc: now },
     ),
   );
   if (args.flags["dry-run"]) {
-    console.log(JSON.stringify({ status: "ok", mode, run_id: runId, config_hash: configHash, event_log: `data/events/${runId}.jsonl` }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          status: "ok",
+          mode,
+          run_id: runId,
+          config_hash: configHash,
+          timezone: config.system.timezone,
+          started_at_utc: now,
+          started_at_et: nowEt,
+          event_log: `data/events/${runId}.jsonl`,
+        },
+        null,
+        2,
+      ),
+    );
     return;
   }
   const secrets = secretsFromEnv();
@@ -105,6 +124,9 @@ async function runCommand(args: ParsedArgs): Promise<void> {
         mode,
         run_id: runId,
         config_hash: configHash,
+        timezone: config.system.timezone,
+        started_at_utc: now,
+        started_at_et: nowEt,
         event_log: `data/events/${runId}.jsonl`,
         candidate_symbols: initialized.candidateSymbols.length,
         note: "Before-market checks completed, selected option contracts are subscribed, and stream events now drive the shared domain engine.",

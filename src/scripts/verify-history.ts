@@ -8,7 +8,7 @@ import type { EventEnvelope, OptionRight } from "../domain/types";
 import type { ReplayReport } from "../replay/reports";
 import { analyzeMissedOpportunities, type OpportunityVerificationSummary } from "../replay/missedOpportunityAnalyzer";
 import { runEventsThroughProductionEngine } from "../replay/replayRunner";
-import { zonedTimeToUtc } from "../util/time";
+import { DEFAULT_TIMEZONE, formatZonedIso, zonedTimeToUtc } from "../util/time";
 import { SimulatedExecutionAdapter } from "../broker/simulatedExecutionAdapter";
 
 interface ParsedArgs {
@@ -54,9 +54,11 @@ interface GreeksSnapshot {
 
 export interface EntryFire {
   timestamp_utc: string;
+  timestamp_et: string;
   underlying: string;
   direction: string;
   risk_status: "approved" | "blocked";
+  strategy_type?: string;
   selected_contract: string;
   action_id?: string;
   client_order_id?: string;
@@ -74,10 +76,14 @@ export interface TradePnlRow {
   strategy_type?: string;
   status: "submitted" | "entry_filled" | "closed";
   entry_submitted_at_utc: string;
+  entry_submitted_at_et: string;
   entry_filled_at_utc?: string;
+  entry_filled_at_et?: string;
   entry_price?: number;
   exit_submitted_at_utc?: string;
+  exit_submitted_at_et?: string;
   exit_filled_at_utc?: string;
+  exit_filled_at_et?: string;
   exit_price?: number;
   qty: number;
   realized_pnl_dollars: number;
@@ -88,6 +94,7 @@ export interface HistoricalVerificationSummary {
   status: "ok";
   date: string;
   underlying: string;
+  timezone: string;
   stock_bars: number;
   candidate_symbols: string[];
   option_bar_symbols: string[];
@@ -147,8 +154,8 @@ export async function runHistoricalVerification(params: {
     runIdPrefix: "replay-history",
   });
   const { outputEvents, report, state } = replay;
-  const entriesFired = buildEntryFires(outputEvents);
-  const tradePnl = buildTradePnl(outputEvents, state);
+  const entriesFired = buildEntryFires(outputEvents, config.system.timezone);
+  const tradePnl = buildTradePnl(outputEvents, state, config.system.timezone);
   const opportunityVerification = analyzeMissedOpportunities({ inputEvents, outputEvents });
   const safeName = `${params.underlying.toUpperCase()}-${params.date}`;
   const eventPath = join("data", "events", `historical-${safeName}.jsonl`);
@@ -160,6 +167,7 @@ export async function runHistoricalVerification(params: {
     status: "ok",
     date: params.date,
     underlying: params.underlying.toUpperCase(),
+    timezone: config.system.timezone,
     stock_bars: stockBars.length,
     candidate_symbols: candidates.map((candidate) => candidate.symbol),
     option_bar_symbols: Object.keys(optionBars).filter((symbol) => (optionBars[symbol]?.length ?? 0) > 0),
@@ -391,7 +399,7 @@ function buildHistoricalEvents(params: {
   optionTrades: Record<string, Trade[]>;
 }): EventEnvelope[] {
   const sourceRunId = `historical-${params.underlying.toUpperCase()}-${params.date}`;
-  const factory = new EventFactory(sourceRunId);
+  const factory = new EventFactory(sourceRunId, params.config.system.timezone);
   const events: EventEnvelope[] = [];
   const openingRange = computeOpeningRange(params.stockBars, params.config.strategy.opening_range_minutes);
   const barsByTime = new Map(params.stockBars.map((bar) => [bar.t, bar]));
@@ -766,7 +774,7 @@ function latestBarAtOrBefore(bars: Bar[], atIso: string): Bar | undefined {
   return latest;
 }
 
-export function buildEntryFires(events: EventEnvelope[]): EntryFire[] {
+export function buildEntryFires(events: EventEnvelope[], timezone = DEFAULT_TIMEZONE): EntryFire[] {
   const entries: EntryFire[] = [];
   for (const event of events) {
     if (event.event_type !== "decision_approved" && event.event_type !== "decision_blocked") {
@@ -784,9 +792,11 @@ export function buildEntryFires(events: EventEnvelope[]): EntryFire[] {
     const limitPrice = numberOrUndefined(action?.limit_price);
     entries.push({
       timestamp_utc: event.received_at_utc,
+      timestamp_et: event.received_at_et ?? formatZonedIso(event.received_at_utc, timezone),
       underlying: String(action?.underlying_symbol ?? signal?.underlying_symbol ?? event.symbol ?? ""),
       direction,
       risk_status: event.event_type === "decision_approved" ? "approved" : "blocked",
+      ...(action?.strategy_type === undefined ? {} : { strategy_type: String(action.strategy_type) }),
       selected_contract: String(event.normalized.selected_contract ?? legs[0].symbol ?? ""),
       ...(action?.action_id === undefined ? {} : { action_id: String(action.action_id) }),
       ...(action?.client_order_id === undefined ? {} : { client_order_id: String(action.client_order_id) }),
@@ -800,11 +810,11 @@ export function buildEntryFires(events: EventEnvelope[]): EntryFire[] {
   return entries;
 }
 
-export function buildTradePnl(events: EventEnvelope[], state: LiveState): TradePnlRow[] {
+export function buildTradePnl(events: EventEnvelope[], state: LiveState, timezone = DEFAULT_TIMEZONE): TradePnlRow[] {
   const rows: TradePnlRow[] = [];
   const openBySymbol = new Map<string, TradePnlRow[]>();
   const rowByEntryClientOrderId = new Map<string, TradePnlRow>();
-  const closeOrders = new Map<string, { symbol: string; submittedAt: string; qty: number }>();
+  const closeOrders = new Map<string, { symbol: string; submittedAt: string; submittedAtEt: string; qty: number }>();
 
   for (const event of events) {
     if (event.event_type === "order_submitted") {
@@ -824,6 +834,7 @@ export function buildTradePnl(events: EventEnvelope[], state: LiveState): TradeP
           strategy_type: typeof action.strategy_type === "string" ? action.strategy_type : undefined,
           status: "submitted",
           entry_submitted_at_utc: event.received_at_utc,
+          entry_submitted_at_et: event.received_at_et ?? formatZonedIso(event.received_at_utc, timezone),
           qty: Number(action.qty ?? 0),
           realized_pnl_dollars: 0,
         };
@@ -838,6 +849,7 @@ export function buildTradePnl(events: EventEnvelope[], state: LiveState): TradeP
         closeOrders.set(clientOrderId, {
           symbol,
           submittedAt: event.received_at_utc,
+          submittedAtEt: event.received_at_et ?? formatZonedIso(event.received_at_utc, timezone),
           qty: Number(action.qty ?? 0),
         });
       }
@@ -863,6 +875,7 @@ export function buildTradePnl(events: EventEnvelope[], state: LiveState): TradeP
       }
       row.status = "entry_filled";
       row.entry_filled_at_utc = event.received_at_utc;
+      row.entry_filled_at_et = event.received_at_et ?? formatZonedIso(event.received_at_utc, timezone);
       row.entry_price = fillPrice;
       row.qty = filledQty || row.qty;
       const mark = state.optionQuotes.get(row.symbol);
@@ -887,7 +900,9 @@ export function buildTradePnl(events: EventEnvelope[], state: LiveState): TradeP
         const closingQty = Math.min(row.qty, remainingQty);
         row.status = "closed";
         row.exit_submitted_at_utc = closeOrder.submittedAt;
+        row.exit_submitted_at_et = closeOrder.submittedAtEt;
         row.exit_filled_at_utc = event.received_at_utc;
+        row.exit_filled_at_et = event.received_at_et ?? formatZonedIso(event.received_at_utc, timezone);
         row.exit_price = fillPrice;
         if (row.entry_price !== undefined && fillPrice !== undefined) {
           row.realized_pnl_dollars = round((fillPrice - row.entry_price) * closingQty * 100, 2);

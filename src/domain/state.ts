@@ -18,6 +18,11 @@ interface PricePoint {
   price: number;
 }
 
+interface ValuePoint {
+  at: string;
+  value: number;
+}
+
 export class LiveState {
   readonly underlyings = new Map<string, UnderlyingState>();
   readonly optionQuotes = new Map<string, OptionQuoteState>();
@@ -29,6 +34,7 @@ export class LiveState {
   readonly priceHistory = new Map<string, PricePoint[]>();
   readonly barHistory = new Map<string, UnderlyingBarPoint[]>();
   readonly optionMidHistory = new Map<string, PricePoint[]>();
+  readonly optionIvHistory = new Map<string, ValuePoint[]>();
 
   killSwitchEnabled = false;
   newEntriesDisabled = false;
@@ -176,15 +182,24 @@ export class LiveState {
     }
     const current = this.optionQuotes.get(symbol) ?? { symbol };
     if (event.event_type === "option_snapshot") {
+      const impliedVolatility = numberOrUndefined(event.normalized.implied_volatility) ?? current.implied_volatility;
       this.optionQuotes.set(symbol, {
         ...current,
-        implied_volatility: numberOrUndefined(event.normalized.implied_volatility) ?? current.implied_volatility,
+        implied_volatility: impliedVolatility,
         delta: numberOrUndefined(event.normalized.delta) ?? current.delta,
         gamma: numberOrUndefined(event.normalized.gamma) ?? current.gamma,
         theta: numberOrUndefined(event.normalized.theta) ?? current.theta,
         vega: numberOrUndefined(event.normalized.vega) ?? current.vega,
         snapshot_at_utc: event.received_at_utc,
       });
+      if (impliedVolatility !== undefined && impliedVolatility > 0) {
+        const history = this.optionIvHistory.get(symbol) ?? [];
+        history.push({ at: event.received_at_utc, value: impliedVolatility });
+        this.optionIvHistory.set(
+          symbol,
+          history.filter((point) => Date.parse(event.received_at_utc) - Date.parse(point.at) <= 390 * 60 * 1000),
+        );
+      }
       return;
     }
     if (event.event_type === "option_trade") {

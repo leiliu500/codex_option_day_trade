@@ -18,6 +18,7 @@ The MVP is intentionally conservative:
 - No naked short options.
 - No overnight positions; force flatten starts 30 minutes before market close.
 - JSONL event sourcing for audit and replay.
+- Human-facing run output, event envelopes, and historical reports include ET companion fields such as `started_at_et`, `received_at_et`, and `timestamp_et`; UTC fields remain present for deterministic replay.
 
 ## Setup
 

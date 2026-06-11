@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { isRiskLimitEnabled, type AppConfig } from "../config/config";
 import type { LiveState } from "../domain/state";
-import type { RiskDecision, TradeAction } from "../domain/types";
+import type { OptionContract, RiskDecision, StrategyType, TradeAction } from "../domain/types";
 import { optionMid } from "../domain/types";
-import { isEtBetween, secondsBetweenIso } from "../util/time";
+import { isEtAtOrAfter, isEtBetween, secondsBetweenIso } from "../util/time";
 
 export class RiskEngine {
   constructor(
@@ -20,17 +20,32 @@ export class RiskEngine {
     };
     const isClose = action.action_type === "close";
     const leg = action.legs[0];
+    const legStates = action.legs.map((item) => ({
+      leg: item,
+      quote: state.optionQuotes.get(item.symbol),
+      contract: state.contracts.get(item.symbol),
+    }));
     const quote = state.optionQuotes.get(leg.symbol);
     const mid = optionMid(quote);
-    const spread = quote?.bid !== undefined && quote.ask !== undefined ? quote.ask - quote.bid : undefined;
-    const spreadPct = mid !== undefined && spread !== undefined ? spread / mid : undefined;
-    const quoteAge = secondsBetweenIso(quote?.received_at_utc, nowIso);
+    const spreadPcts = legStates
+      .map((item) => {
+        const itemMid = optionMid(item.quote);
+        const itemSpread = item.quote?.bid !== undefined && item.quote.ask !== undefined ? item.quote.ask - item.quote.bid : undefined;
+        return itemMid !== undefined && itemSpread !== undefined ? itemSpread / itemMid : undefined;
+      })
+      .filter((value): value is number => value !== undefined);
+    const spreadPct = spreadPcts.length === 0 ? undefined : Math.max(...spreadPcts);
+    const quoteAges = legStates.map((item) => secondsBetweenIso(item.quote?.received_at_utc, nowIso));
+    const quoteAge = quoteAges.length === 0 ? Number.POSITIVE_INFINITY : Math.max(...quoteAges);
     const underlying = state.underlyings.get(action.underlying_symbol);
     const underlyingAge = secondsBetweenIso(underlying?.last_received_at_utc, nowIso);
 
     rules.option_quote_age_seconds = quoteAge;
     rules.underlying_quote_age_seconds = underlyingAge;
     rules.spread_pct_of_mid = spreadPct;
+    rules.leg_count = action.legs.length;
+    rules.order_class = action.order_class ?? (action.legs.length > 1 ? "mleg" : "simple");
+    rules.strategy_type = action.strategy_type;
     rules.open_positions = state.getOpenPositions().length;
     rules.open_orders = state.getOpenOrders().length;
     rules.daily_realized_pnl = state.dailyRealizedPnl;
@@ -47,8 +62,33 @@ export class RiskEngine {
       if (state.newEntriesDisabled) {
         blocked.push("new_entries_disabled");
       }
-      if (action.legs.some((leg) => leg.position_intent === "sell_to_open" || leg.position_intent === "buy_to_close")) {
+      if (
+        action.legs.some((leg) => leg.position_intent === "sell_to_open") &&
+        !this.config.option_strategy.allow_naked_short_options &&
+        !definedRiskShortOpenLegs(action, legStates.map((item) => item.contract))
+      ) {
         blocked.push("naked_or_short_option_not_allowed");
+      }
+      if (action.legs.some((leg) => leg.position_intent === "buy_to_close")) {
+        blocked.push("buy_to_close_not_allowed_for_open_action");
+      }
+      if (action.legs.length > 1 && this.config.option_strategy.options_approval_level < this.config.option_strategy.options_level_required_for_mleg) {
+        blocked.push("options_level_insufficient_for_mleg");
+      }
+      if (!strategyEnabled(action.strategy_type, this.config)) {
+        blocked.push("strategy_disabled");
+      }
+      if (action.legs.length > 1 && !sameUnderlyingAndExpiration(legStates.map((item) => item.contract))) {
+        blocked.push("multi_leg_contract_mismatch");
+      }
+      if (isCreditStrategy(action.strategy_type) && action.entry_reason.includes("regime_HIGH_VOL_WHIPSAW")) {
+        blocked.push("credit_strategy_blocked_in_high_vol_whipsaw");
+      }
+      if (
+        isCreditStrategy(action.strategy_type) &&
+        isEtAtOrAfter(new Date(nowIso), this.config.option_strategy.last_credit_spread_entry_time_et, this.config.system.timezone)
+      ) {
+        blocked.push("too_late_for_credit_spread_entry");
       }
       if (!isEtBetween(new Date(nowIso), this.config.session.regular_open_et, this.config.session.regular_close_et, this.config.system.timezone)) {
         blocked.push("market_closed");
@@ -101,7 +141,12 @@ export class RiskEngine {
         blocked.push("close_price_missing");
       }
     } else {
-      if (!quote || quote.bid === undefined || quote.ask === undefined || quote.bid <= 0 || quote.ask <= quote.bid || mid === undefined) {
+      if (
+        legStates.some((item) => {
+          const itemMid = optionMid(item.quote);
+          return !item.quote || item.quote.bid === undefined || item.quote.ask === undefined || item.quote.bid <= 0 || item.quote.ask <= item.quote.bid || itemMid === undefined;
+        })
+      ) {
         blocked.push("bid_ask_invalid");
       }
       if (quoteAge > this.config.stream.max_quote_age_seconds) {
@@ -111,8 +156,7 @@ export class RiskEngine {
         blocked.push("spread_too_wide");
       }
     }
-    const contract = state.contracts.get(leg.symbol);
-    if (contract?.status && contract.status !== "active") {
+    if (legStates.some((item) => item.contract?.status && item.contract.status !== "active")) {
       blocked.push("contract_not_active");
     }
     if (
@@ -169,4 +213,72 @@ export class RiskEngine {
     }
     rules.streams = streamRules;
   }
+}
+
+function strategyEnabled(strategy: StrategyType | undefined, config: AppConfig): boolean {
+  switch (strategy) {
+    case "call_debit_spread":
+    case "put_debit_spread":
+      return config.option_strategy.enable_debit_spreads;
+    case "put_credit_spread":
+    case "call_credit_spread":
+      return config.option_strategy.enable_credit_spreads;
+    case "iron_condor":
+      return config.option_strategy.enable_iron_condor;
+    case "long_straddle":
+    case "long_strangle":
+      return config.option_strategy.enable_long_straddles;
+    default:
+      return true;
+  }
+}
+
+function isCreditStrategy(strategy: StrategyType | undefined): boolean {
+  return strategy === "put_credit_spread" || strategy === "call_credit_spread" || strategy === "iron_condor";
+}
+
+function sameUnderlyingAndExpiration(contracts: Array<OptionContract | undefined>): boolean {
+  if (contracts.some((contract) => contract === undefined)) {
+    return false;
+  }
+  const defined = contracts as OptionContract[];
+  if (defined.length <= 1) {
+    return true;
+  }
+  return defined.every(
+    (contract) =>
+      contract.underlying_symbol === defined[0].underlying_symbol && contract.expiration_date === defined[0].expiration_date,
+  );
+}
+
+function definedRiskShortOpenLegs(action: TradeAction, contracts: Array<OptionContract | undefined>): boolean {
+  const bySymbol = new Map<string, OptionContract>();
+  for (const contract of contracts) {
+    if (contract) {
+      bySymbol.set(contract.symbol, contract);
+    }
+  }
+  const shortOpenLegs = action.legs.filter((leg) => leg.position_intent === "sell_to_open");
+  if (shortOpenLegs.length === 0) {
+    return true;
+  }
+  return shortOpenLegs.every((shortLeg) => {
+    const shortContract = bySymbol.get(shortLeg.symbol);
+    if (!shortContract) {
+      return false;
+    }
+    return action.legs.some((longLeg) => {
+      if (longLeg.position_intent !== "buy_to_open" || longLeg.symbol === shortLeg.symbol) {
+        return false;
+      }
+      const longContract = bySymbol.get(longLeg.symbol);
+      return (
+        longContract !== undefined &&
+        longContract.underlying_symbol === shortContract.underlying_symbol &&
+        longContract.expiration_date === shortContract.expiration_date &&
+        longContract.right === shortContract.right &&
+        longContract.strike_price !== shortContract.strike_price
+      );
+    });
+  });
 }

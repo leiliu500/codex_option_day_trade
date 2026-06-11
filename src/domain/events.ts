@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { nowUtcIso } from "../util/time";
+import { DEFAULT_TIMEZONE, formatZonedIso, nowUtcIso } from "../util/time";
 import type { EventEnvelope, EventSource } from "./types";
 
 export class EventFactory {
   private sequence = 0;
 
-  constructor(private readonly runId: string) {}
+  constructor(
+    private readonly runId: string,
+    private readonly timeZone = DEFAULT_TIMEZONE,
+  ) {}
 
   next(
     event_type: string,
@@ -20,13 +23,17 @@ export class EventFactory {
     } = {},
   ): EventEnvelope {
     this.sequence += 1;
+    const receivedAtUtc = options.received_at_utc ?? nowUtcIso();
+    const eventAtUtc = options.event_at_utc;
     return {
       event_id: randomUUID(),
       run_id: this.runId,
       event_type,
       source,
-      event_at_utc: options.event_at_utc,
-      received_at_utc: options.received_at_utc ?? nowUtcIso(),
+      event_at_utc: eventAtUtc,
+      event_at_et: eventAtUtc === undefined ? undefined : formatZonedIso(eventAtUtc, this.timeZone),
+      received_at_utc: receivedAtUtc,
+      received_at_et: formatZonedIso(receivedAtUtc, this.timeZone),
       sequence_num: this.sequence,
       symbol: options.symbol,
       correlation_id: options.correlation_id,

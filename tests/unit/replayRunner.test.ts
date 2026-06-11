@@ -44,16 +44,16 @@ test("production replay gates repeated entries from the same active setup", asyn
   );
 });
 
-test("production replay requires persistent setup confirmation before opening", async () => {
+test("production replay blocks entries while setup confirmation is still pending", async () => {
   const { config } = loadConfig("configs/paper.yaml");
   config.session.first_entry_time_et = "10:00:00";
-  config.strategy.entry_confirmation_seconds = 60;
+  config.strategy.entry_confirmation_seconds = 30;
   config.strategy.max_opening_range_bps = null;
-  const inputEvents = bullishRegimeReplayEvents(7);
+  const inputEvents = bullishRegimeReplayEvents(12);
 
   const result = await runEventsThroughProductionEngine({ inputEvents, config, configHash: sha256(config) });
 
-  assert.ok(result.report.orders_simulated >= 1);
+  assert.equal(result.report.orders_simulated, 0);
   assert.ok(
     result.outputEvents.some((event) => {
       const reasons = event.normalized.reason_codes;

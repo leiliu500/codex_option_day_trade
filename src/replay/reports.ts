@@ -1,11 +1,15 @@
 import type { EventEnvelope } from "../domain/types";
 import type { LiveState } from "../domain/state";
+import { DEFAULT_TIMEZONE, formatZonedIso, nowUtcIso } from "../util/time";
 import { analyzeMissedOpportunities, type OpportunityVerificationSummary } from "./missedOpportunityAnalyzer";
 
 export interface ReplayReport {
   source_run_id?: string;
   replay_id: string;
   config_hash: string;
+  timezone: string;
+  generated_at_utc: string;
+  generated_at_et: string;
   events_processed: number;
   decisions_generated: number;
   orders_simulated: number;
@@ -24,11 +28,17 @@ export function buildReplayReport(params: {
   outputEvents: EventEnvelope[];
   state: LiveState;
   mismatches?: string[];
+  timezone?: string;
 }): ReplayReport {
+  const timezone = params.timezone ?? DEFAULT_TIMEZONE;
+  const generatedAtUtc = nowUtcIso();
   return {
     source_run_id: params.inputEvents[0]?.run_id,
     replay_id: params.replayId,
     config_hash: params.configHash,
+    timezone,
+    generated_at_utc: generatedAtUtc,
+    generated_at_et: formatZonedIso(generatedAtUtc, timezone),
     events_processed: params.inputEvents.length,
     decisions_generated: params.outputEvents.filter((event) => event.event_type.startsWith("decision_")).length,
     orders_simulated: params.outputEvents.filter((event) => event.event_type === "order_submitted").length,

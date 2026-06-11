@@ -9,8 +9,11 @@ import { isEtBetween, secondsBetweenIso } from "../util/time";
 import { SignalEngine } from "./signalEngine";
 import { FeatureEngine } from "./featureEngine";
 import { RegimeEngine } from "../domain/regimeEngine";
+import { VolatilityRegimeEngine } from "../domain/volatilityRegimeEngine";
 import { CandidateRanker } from "./candidateRanker";
 import { ContractSelector } from "./contractSelector";
+import { OptionStrategySelector } from "../domain/optionStrategySelector";
+import { StrategyActionBuilder } from "../domain/strategyActionBuilder";
 import { RiskEngine } from "./riskEngine";
 import { ExecutionPolicy } from "./executionPolicy";
 import { PositionManager } from "./positionManager";
@@ -29,8 +32,11 @@ export class DomainEngine {
   private readonly signalEngine: SignalEngine;
   private readonly featureEngine: FeatureEngine;
   private readonly regimeEngine: RegimeEngine;
+  private readonly volatilityEngine: VolatilityRegimeEngine;
   private readonly candidateRanker: CandidateRanker;
   private readonly selector: ContractSelector;
+  private readonly strategySelector: OptionStrategySelector;
+  private readonly strategyActionBuilder: StrategyActionBuilder;
   private readonly riskEngine: RiskEngine;
   private readonly executionPolicy: ExecutionPolicy;
   private readonly positionManager: PositionManager;
@@ -41,8 +47,11 @@ export class DomainEngine {
     this.signalEngine = new SignalEngine(options.config, options.runId);
     this.featureEngine = new FeatureEngine(options.config);
     this.regimeEngine = new RegimeEngine(options.config);
+    this.volatilityEngine = new VolatilityRegimeEngine(options.config);
     this.candidateRanker = new CandidateRanker(options.config);
     this.selector = new ContractSelector(options.config);
+    this.strategySelector = new OptionStrategySelector(options.config);
+    this.strategyActionBuilder = new StrategyActionBuilder(options.config, options.runId);
     this.riskEngine = new RiskEngine(options.config, options.configHash);
     this.executionPolicy = new ExecutionPolicy(options.config, options.runId);
     this.positionManager = new PositionManager(options.config, this.executionPolicy);
@@ -89,12 +98,14 @@ export class DomainEngine {
         continue;
       }
       const regime = this.regimeEngine.classify(features);
+      const volatility = this.volatilityEngine.classify(this.volatilityEngine.features(this.options.state, underlying, nowIso));
       if (!regime.tradable) {
         const signal = this.noTradeSignal(underlying, nowIso, [`regime_${regime.regime}`, ...regime.blockers], features as unknown as Record<string, unknown>);
         this.pendingEntryGate.delete(underlying);
         this.appendDecision("decision_no_trade", signal, undefined, undefined, nowIso, {
           reason_codes: signal.reason_codes,
           regime,
+          volatility,
         });
         continue;
       }
@@ -139,30 +150,49 @@ export class DomainEngine {
           continue;
         }
         const contractCandidates = this.selector.select(candidate, this.options.state, nowIso);
-        if (contractCandidates.length === 0) {
+        const strategyDecision = this.strategySelector.select({
+          candidate,
+          singleLegCandidates: contractCandidates,
+          state: this.options.state,
+          nowIso,
+          volatilityDecision: volatility,
+        });
+        if (strategyDecision.action === "NO_TRADE" || !strategyDecision.selected) {
           this.appendDecision("decision_no_trade", signal, undefined, undefined, nowIso, {
-            reason_codes: [...signal.reason_codes, "no_contract_candidate"],
+            reason_codes: [
+              ...signal.reason_codes,
+              strategyDecision.noTradeReason ?? "no_valid_strategy_candidate",
+              ...strategyDecision.candidates.flatMap((strategyCandidate) => strategyCandidate.blockers),
+            ],
             regime,
             candidate,
+            volatility,
+            strategy_decision: strategyDecision,
           });
           continue;
         }
-        const action = this.executionPolicy.buildOpenAction(signal, contractCandidates[0], nowIso);
+        const action = this.strategyActionBuilder.buildOpenAction(signal, strategyDecision.selected, nowIso);
         const riskDecision = this.riskEngine.evaluate(action, this.options.state, nowIso, this.options.configHash);
         this.appendRisk(riskDecision, action, nowIso);
         if (!riskDecision.approved) {
           this.appendDecision("decision_blocked", signal, action, riskDecision, nowIso, {
-            selected_contract: contractCandidates[0].contract.symbol,
+            selected_contract: action.legs[0]?.symbol,
+            selected_strategy: strategyDecision.selected.strategy,
             blocked_reasons: riskDecision.blocked_reasons,
             regime,
             candidate,
+            volatility,
+            strategy_decision: strategyDecision,
           });
           continue;
         }
         this.appendDecision("decision_approved", signal, action, riskDecision, nowIso, {
-          selected_contract: contractCandidates[0].contract.symbol,
+          selected_contract: action.legs[0]?.symbol,
+          selected_strategy: strategyDecision.selected.strategy,
           regime,
           candidate,
+          volatility,
+          strategy_decision: strategyDecision,
         });
         this.markEntrySetup(candidate, signal, nowIso);
         await this.submitOrder(action, nowIso);
@@ -176,7 +206,13 @@ export class DomainEngine {
   }
 
   private shouldEvaluateEntries(triggerEvent: EventEnvelope | undefined): boolean {
-    return !triggerEvent || triggerEvent.event_type === "underlying_quote" || triggerEvent.event_type === "underlying_bar";
+    return (
+      !triggerEvent ||
+      triggerEvent.event_type === "underlying_quote" ||
+      triggerEvent.event_type === "underlying_bar" ||
+      triggerEvent.event_type === "option_quote" ||
+      triggerEvent.event_type === "option_snapshot"
+    );
   }
 
   private inEntryWindow(nowIso: string): boolean {

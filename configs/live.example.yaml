@@ -120,21 +120,21 @@ regime:
     max_hold_seconds: 1500
   candidate_scores:
     min_strong_score: 72
-    min_grind_score: 68
+    min_grind_score: 62
     min_gap_and_go_score: 78
     min_reversal_score: 76
     min_chop_breakout_score: 85
     min_whipsaw_reversal_score: 88
-    min_wide_directional_score: 78
+    min_wide_directional_score: 65
   repeat_entry:
-    default_cooldown_sec: 600
-    strong_trend_cooldown_sec: 300
-    grind_cooldown_sec: 420
+    default_cooldown_sec: 30
+    strong_trend_cooldown_sec: 30
+    grind_cooldown_sec: 60
     reversal_cooldown_sec: 900
     same_setup_cooldown_sec: 600
-    different_setup_cooldown_sec: 300
-    min_new_move_bps_default: 25
-    min_new_move_bps_grind: 8
+    different_setup_cooldown_sec: 30
+    min_new_move_bps_default: 2
+    min_new_move_bps_grind: 2
     require_new_pullback_for_grind: true
     max_entries_per_direction_per_day: 3
     max_entries_per_regime_per_day: 2
@@ -147,15 +147,50 @@ regime:
     max_quote_age_seconds: 2
     require_option_mid_confirmation: true
 
+volatility:
+  low_iv_rank_max: 0.3
+  high_iv_rank_min: 0.7
+  extreme_iv_rank_min: 0.9
+  high_iv_to_rv_min: 1.25
+  extreme_intraday_iv_z_min: 2
+  min_iv_history_points: 20
+
+option_strategy:
+  min_strategy_score: 55
+  enable_debit_spreads: true
+  enable_credit_spreads: false
+  enable_iron_condor: false
+  enable_long_straddles: false
+  allow_naked_short_options: false
+  options_approval_level: 3
+  options_level_required_for_mleg: 3
+  max_loss_per_trade_dollars: null
+  max_spread_width: 5
+  max_debit_per_spread: 2.5
+  min_credit_pct_of_width: 0.2
+  last_debit_spread_entry_time_et: "15:15:00"
+  last_credit_spread_entry_time_et: "14:45:00"
+  last_iron_condor_entry_time_et: "14:30:00"
+  force_close_long_options_time_et: "15:45:00"
+  force_close_debit_spreads_time_et: "15:40:00"
+  force_close_credit_spreads_time_et: "15:30:00"
+  force_close_iron_condors_time_et: "15:15:00"
+  credit_spread_safety:
+    block_in_high_vol_whipsaw: true
+    block_near_reversal_warning: true
+    require_trend_efficiency_min: 0.45
+    require_vwap_slope_aligned: true
+    require_short_strike_outside_expected_move: false
+
 contract_selector:
   target_abs_delta: 0.5
   min_abs_delta: 0.35
   max_abs_delta: 0.65
-  max_spread_pct_of_mid: 0.15
+  max_spread_pct_of_mid: 0.25
   min_bid: 0.05
   min_mid: 0.2
   max_mid: 10
-  min_open_interest: 100
+  min_open_interest: 0
   prefer_near_the_money: true
 
 risk:

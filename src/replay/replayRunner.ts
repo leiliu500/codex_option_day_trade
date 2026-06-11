@@ -29,7 +29,7 @@ export async function runEventsThroughProductionEngine(params: {
 }): Promise<ProductionReplayResult> {
   const replayId = randomUUID();
   const runId = `${params.runIdPrefix ?? "replay"}-${replayId}`;
-  const eventFactory = new EventFactory(runId);
+  const eventFactory = new EventFactory(runId, params.config.system.timezone);
   const store = new InMemoryEventStore();
   const state = new LiveState(params.config);
   const engine = new DomainEngine({
@@ -52,6 +52,7 @@ export async function runEventsThroughProductionEngine(params: {
     inputEvents: params.inputEvents,
     outputEvents,
     state,
+    timezone: params.config.system.timezone,
   });
   return {
     replayId,

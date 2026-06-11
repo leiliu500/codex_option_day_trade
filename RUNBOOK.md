@@ -9,6 +9,7 @@
 - `lotd check-alpaca --paper` can reach the account.
 - Account status, options approval, and buying power pass startup checks.
 - Event log directory is writable.
+- Confirm CLI output shows `timezone: America/New_York`; inspect event logs and replay reports with `*_et` fields for market-time checks.
 - Kill switch state is known.
 - Universe DTE is `0` to select contracts expiring on the current ET date only.
 - New entries are blocked until 30 minutes after market open.

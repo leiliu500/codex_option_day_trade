@@ -9,6 +9,9 @@ export type MissedOpportunityBlocker =
   | "cooldown_blocked"
   | "contract_not_found"
   | "spread_too_wide"
+  | "strategy_score_too_low"
+  | "strategy_policy_blocked"
+  | "spread_construction_failed"
   | "risk_gate_blocked";
 
 export interface OpportunityLabel {
@@ -279,12 +282,19 @@ function rawDecisionBlockers(event: EventEnvelope): string[] {
   const normalized = event.normalized;
   const riskDecision = normalized.risk_decision as Record<string, unknown> | undefined;
   const candidate = normalized.candidate as Record<string, unknown> | undefined;
+  const strategyDecision = normalized.strategy_decision as Record<string, unknown> | undefined;
   const blockedReasons = Array.isArray(normalized.blocked_reasons)
     ? normalized.blocked_reasons.map(String)
     : Array.isArray(riskDecision?.blocked_reasons)
       ? riskDecision.blocked_reasons.map(String)
       : [];
   const candidateBlockers = Array.isArray(candidate?.blockers) ? candidate.blockers.map(String) : [];
+  const strategyNoTrade = typeof strategyDecision?.noTradeReason === "string" ? [strategyDecision.noTradeReason] : [];
+  const strategyCandidateBlockers = Array.isArray(strategyDecision?.candidates)
+    ? (strategyDecision.candidates as Array<Record<string, unknown>>).flatMap((strategyCandidate) =>
+        Array.isArray(strategyCandidate.blockers) ? strategyCandidate.blockers.map(String) : [],
+      )
+    : [];
   const reasonCodes = Array.isArray(normalized.reason_codes)
     ? normalized.reason_codes.map(String)
     : Array.isArray((normalized.signal as Record<string, unknown> | undefined)?.reason_codes)
@@ -301,9 +311,16 @@ function rawDecisionBlockers(event: EventEnvelope): string[] {
     reason.includes("acceleration_too_low") ||
     reason.includes("stale") ||
     reason.includes("too_wide") ||
+    reason.includes("too_high") ||
+    reason.includes("too_small") ||
+    reason.includes("strategy") ||
+    reason.includes("spread") ||
+    reason.includes("credit") ||
+    reason.includes("debit") ||
+    reason.includes("iron_condor") ||
     reason.includes("no_edge"),
   );
-  return [...new Set([...blockedReasons, ...candidateBlockers, ...semanticReasons])];
+  return [...new Set([...blockedReasons, ...candidateBlockers, ...strategyNoTrade, ...strategyCandidateBlockers, ...semanticReasons])];
 }
 
 function canonicalDecisionBlockers(event: EventEnvelope, rawBlockers: string[]): MissedOpportunityBlocker[] {
@@ -338,6 +355,28 @@ function canonicalDecisionBlockers(event: EventEnvelope, rawBlockers: string[]):
     }
     if (normalized === "spread_too_wide") {
       add("spread_too_wide");
+    }
+    if (normalized === "strategy_score_too_low") {
+      add("strategy_score_too_low");
+    }
+    if (
+      normalized === "no_valid_strategy_candidate" ||
+      normalized === "credit_spreads_disabled" ||
+      normalized === "debit_spreads_disabled" ||
+      normalized === "iron_condor_disabled" ||
+      normalized === "long_straddles_disabled" ||
+      normalized === "strategy_disabled"
+    ) {
+      add("strategy_policy_blocked");
+    }
+    if (
+      normalized === "spread_contract_not_found" ||
+      normalized === "spread_quote_invalid" ||
+      normalized === "spread_debit_too_high" ||
+      normalized === "spread_width_too_wide" ||
+      normalized === "credit_too_small"
+    ) {
+      add("spread_construction_failed");
     }
   }
   const riskDecision = event.normalized.risk_decision as Record<string, unknown> | undefined;

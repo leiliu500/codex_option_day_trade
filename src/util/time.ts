@@ -4,6 +4,21 @@ export function nowUtcIso(): string {
   return new Date().toISOString();
 }
 
+export function formatZonedIso(value: Date | string, timeZone = DEFAULT_TIMEZONE): string {
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid timestamp: ${String(value)}`);
+  }
+  const parts = zonedParts(date, timeZone);
+  const offsetMinutes = zonedOffsetMinutes(date, timeZone);
+  const milliseconds = date.getUTCMilliseconds().toString().padStart(3, "0");
+  return `${parts.year.toString().padStart(4, "0")}-${parts.month.toString().padStart(2, "0")}-${parts.day
+    .toString()
+    .padStart(2, "0")}T${parts.hour.toString().padStart(2, "0")}:${parts.minute
+    .toString()
+    .padStart(2, "0")}:${parts.second.toString().padStart(2, "0")}.${milliseconds}${formatOffset(offsetMinutes)}`;
+}
+
 export function secondsFromClock(clock: string): number {
   const [hour, minute, second] = clock.split(":").map((part) => Number.parseInt(part, 10));
   if ([hour, minute, second].some((part) => Number.isNaN(part))) {
@@ -47,6 +62,12 @@ export function secondsSinceMidnightInZone(date: Date, timeZone = DEFAULT_TIMEZO
   return parts.hour * 3600 + parts.minute * 60 + parts.second;
 }
 
+export function zonedOffsetMinutes(date: Date, timeZone = DEFAULT_TIMEZONE): number {
+  const parts = zonedParts(date, timeZone);
+  const localAsUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  return Math.round((localAsUtc - date.getTime()) / 60000);
+}
+
 export function etDateKey(date: Date, timeZone = DEFAULT_TIMEZONE): string {
   const parts = zonedParts(date, timeZone);
   return `${parts.year.toString().padStart(4, "0")}-${parts.month.toString().padStart(2, "0")}-${parts.day
@@ -87,6 +108,14 @@ function secondsToClock(seconds: number): string {
   return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}:${second
     .toString()
     .padStart(2, "0")}`;
+}
+
+function formatOffset(offsetMinutes: number): string {
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absolute = Math.abs(offsetMinutes);
+  const hours = Math.floor(absolute / 60);
+  const minutes = absolute % 60;
+  return `${sign}${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
 }
 
 export function isEtBetween(date: Date, startEt: string, endEt: string, timeZone = DEFAULT_TIMEZONE): boolean {

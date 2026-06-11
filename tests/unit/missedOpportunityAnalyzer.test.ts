@@ -76,6 +76,15 @@ test("missed opportunity analyzer reports canonical miss reasons", () => {
           "no_contract_candidate",
         ],
         risk_decision: { approved: false, blocked_reasons: ["spread_too_wide"] },
+        strategy_decision: {
+          noTradeReason: "strategy_score_too_low",
+          candidates: [
+            {
+              strategy: "CALL_DEBIT_SPREAD",
+              blockers: ["spread_debit_too_high", "credit_spreads_disabled"],
+            },
+          ],
+        },
         candidate: {
           timestamp: "2026-06-11T14:00:00.000Z",
           underlying: "SPY",
@@ -101,6 +110,9 @@ test("missed opportunity analyzer reports canonical miss reasons", () => {
     "score_too_low",
     "slope_too_low",
     "acceleration_too_low",
+    "strategy_score_too_low",
+    "spread_construction_failed",
+    "strategy_policy_blocked",
     "entry_window_blocked",
     "opening_range_too_wide",
     "cooldown_blocked",

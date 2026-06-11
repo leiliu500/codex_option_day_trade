@@ -108,6 +108,44 @@ export interface RegimeConfig {
   };
 }
 
+export interface VolatilityConfig {
+  low_iv_rank_max: number;
+  high_iv_rank_min: number;
+  extreme_iv_rank_min: number;
+  high_iv_to_rv_min: number;
+  extreme_intraday_iv_z_min: number;
+  min_iv_history_points: number;
+}
+
+export interface OptionStrategyConfig {
+  min_strategy_score: number;
+  enable_debit_spreads: boolean;
+  enable_credit_spreads: boolean;
+  enable_iron_condor: boolean;
+  enable_long_straddles: boolean;
+  allow_naked_short_options: boolean;
+  options_approval_level: number;
+  options_level_required_for_mleg: number;
+  max_loss_per_trade_dollars: RiskLimit;
+  max_spread_width: number;
+  max_debit_per_spread: number;
+  min_credit_pct_of_width: number;
+  last_debit_spread_entry_time_et: string;
+  last_credit_spread_entry_time_et: string;
+  last_iron_condor_entry_time_et: string;
+  force_close_long_options_time_et: string;
+  force_close_debit_spreads_time_et: string;
+  force_close_credit_spreads_time_et: string;
+  force_close_iron_condors_time_et: string;
+  credit_spread_safety: {
+    block_in_high_vol_whipsaw: boolean;
+    block_near_reversal_warning: boolean;
+    require_trend_efficiency_min: number;
+    require_vwap_slope_aligned: boolean;
+    require_short_strike_outside_expected_move: boolean;
+  };
+}
+
 export interface AppConfig {
   system: {
     name: string;
@@ -170,6 +208,8 @@ export interface AppConfig {
     require_vwap_alignment: boolean;
   };
   regime: RegimeConfig;
+  volatility: VolatilityConfig;
+  option_strategy: OptionStrategyConfig;
   contract_selector: {
     target_abs_delta: number;
     min_abs_delta: number;
@@ -359,22 +399,22 @@ export const defaultConfig: AppConfig = {
     },
     candidate_scores: {
       min_strong_score: 72,
-      min_grind_score: 68,
+      min_grind_score: 62,
       min_gap_and_go_score: 78,
       min_reversal_score: 76,
       min_chop_breakout_score: 85,
       min_whipsaw_reversal_score: 88,
-      min_wide_directional_score: 78,
+      min_wide_directional_score: 65,
     },
     repeat_entry: {
-      default_cooldown_sec: 600,
-      strong_trend_cooldown_sec: 300,
-      grind_cooldown_sec: 420,
+      default_cooldown_sec: 30,
+      strong_trend_cooldown_sec: 30,
+      grind_cooldown_sec: 60,
       reversal_cooldown_sec: 900,
       same_setup_cooldown_sec: 600,
-      different_setup_cooldown_sec: 300,
-      min_new_move_bps_default: 25,
-      min_new_move_bps_grind: 8,
+      different_setup_cooldown_sec: 30,
+      min_new_move_bps_default: 2,
+      min_new_move_bps_grind: 2,
       require_new_pullback_for_grind: true,
       max_entries_per_direction_per_day: 3,
       max_entries_per_regime_per_day: 2,
@@ -388,30 +428,66 @@ export const defaultConfig: AppConfig = {
       max_quote_age_seconds: 2,
       require_option_mid_confirmation: true,
       delta_by_regime: {
-        STRONG_UP_CALL: [0.45, 0.65],
-        STRONG_DOWN_PUT: [-0.65, -0.45],
+        STRONG_UP_CALL: [0.35, 0.8],
+        STRONG_DOWN_PUT: [-0.8, -0.35],
         GRIND_UP_CALL: [0.55, 0.75],
         GRIND_DOWN_PUT: [-0.75, -0.55],
         REVERSAL_UP_CALL: [0.5, 0.7],
         REVERSAL_DOWN_PUT: [-0.7, -0.5],
         GAP_AND_GO_UP_CALL: [0.45, 0.7],
         GAP_AND_GO_DOWN_PUT: [-0.7, -0.45],
-        WIDE_DIRECTIONAL_UP_CALL: [0.5, 0.7],
-        WIDE_DIRECTIONAL_DOWN_PUT: [-0.7, -0.5],
+        WIDE_DIRECTIONAL_UP_CALL: [0.35, 0.8],
+        WIDE_DIRECTIONAL_DOWN_PUT: [-0.8, -0.35],
         HIGH_VOL_WHIPSAW_CALL: [0.55, 0.75],
         HIGH_VOL_WHIPSAW_PUT: [-0.75, -0.55],
       },
+    },
+  },
+  volatility: {
+    low_iv_rank_max: 0.3,
+    high_iv_rank_min: 0.7,
+    extreme_iv_rank_min: 0.9,
+    high_iv_to_rv_min: 1.25,
+    extreme_intraday_iv_z_min: 2,
+    min_iv_history_points: 20,
+  },
+  option_strategy: {
+    min_strategy_score: 55,
+    enable_debit_spreads: true,
+    enable_credit_spreads: false,
+    enable_iron_condor: false,
+    enable_long_straddles: false,
+    allow_naked_short_options: false,
+    options_approval_level: 3,
+    options_level_required_for_mleg: 3,
+    max_loss_per_trade_dollars: null,
+    max_spread_width: 5,
+    max_debit_per_spread: 2.5,
+    min_credit_pct_of_width: 0.2,
+    last_debit_spread_entry_time_et: "15:15:00",
+    last_credit_spread_entry_time_et: "14:45:00",
+    last_iron_condor_entry_time_et: "14:30:00",
+    force_close_long_options_time_et: "15:45:00",
+    force_close_debit_spreads_time_et: "15:40:00",
+    force_close_credit_spreads_time_et: "15:30:00",
+    force_close_iron_condors_time_et: "15:15:00",
+    credit_spread_safety: {
+      block_in_high_vol_whipsaw: true,
+      block_near_reversal_warning: true,
+      require_trend_efficiency_min: 0.45,
+      require_vwap_slope_aligned: true,
+      require_short_strike_outside_expected_move: false,
     },
   },
   contract_selector: {
     target_abs_delta: 0.5,
     min_abs_delta: 0.35,
     max_abs_delta: 0.65,
-    max_spread_pct_of_mid: 0.15,
+    max_spread_pct_of_mid: 0.25,
     min_bid: 0.05,
     min_mid: 0.2,
     max_mid: 10,
-    min_open_interest: 100,
+    min_open_interest: 0,
     prefer_near_the_money: true,
   },
   risk: {
@@ -457,6 +533,7 @@ export function loadConfig(configPath?: string): { config: AppConfig; configHash
   const loaded = configPath ? parseYamlSubset(readFileSync(configPath, "utf8")) : {};
   const config = deepMerge(defaultConfig, loaded) as AppConfig;
   normalizeConfig(config);
+  process.env.TZ = config.system.timezone;
   return { config, configHash: sha256(config) };
 }
 

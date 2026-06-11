@@ -1,7 +1,16 @@
 export type TradingMode = "paper" | "live";
 export type OptionRight = "call" | "put";
 export type TradeActionType = "open" | "close" | "cancel" | "replace" | "no_trade";
-export type StrategyType = "long_call" | "long_put" | "call_debit_spread" | "put_debit_spread";
+export type StrategyType =
+  | "long_call"
+  | "long_put"
+  | "call_debit_spread"
+  | "put_debit_spread"
+  | "put_credit_spread"
+  | "call_credit_spread"
+  | "iron_condor"
+  | "long_straddle"
+  | "long_strangle";
 export type RiskDecisionStatus = "approved" | "blocked";
 export type SignalDirection = "bullish" | "bearish" | "neutral" | "none";
 export type EventSource =
@@ -125,10 +134,13 @@ export interface TradeAction {
   underlying_symbol: string;
   legs: OrderLegIntent[];
   qty: number;
+  order_class?: "simple" | "mleg";
   order_type: "limit";
   limit_price?: number;
+  debit_or_credit?: "debit" | "credit";
   time_in_force: "day";
   max_loss_dollars: number;
+  max_profit_dollars?: number;
   entry_reason: string[];
   exit_reason: string[];
   created_at_utc: string;
@@ -150,7 +162,9 @@ export interface EventEnvelope {
   event_type: string;
   source: EventSource;
   event_at_utc?: string;
+  event_at_et?: string;
   received_at_utc: string;
+  received_at_et?: string;
   sequence_num: number;
   symbol?: string;
   correlation_id?: string;
