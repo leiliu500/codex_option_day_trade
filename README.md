@@ -41,6 +41,7 @@ export ALPACA_DATA_URL=https://data.alpaca.markets
 ```bash
 npm run check:config
 npm run replay:fixture
+npm run verify:history -- 2026-06-10 SPY --json
 node dist/src/cli.js check-alpaca --config configs/paper.yaml --paper
 node dist/src/cli.js replay-fixture tests/replay_fixtures/03_stale_option_quote_blocks_entry.jsonl --config configs/paper.yaml
 ```
@@ -52,6 +53,12 @@ node dist/src/cli.js run --config configs/paper.yaml --paper --dry-run
 ```
 
 `run --paper` performs the live workflow setup: account checks, buying-power/options approval checks, current underlying quote, current-date option universe, selected-symbol snapshots, selected-symbol option subscriptions, stock stream, option stream, and trade-update stream. Incoming stream events drive the shared `DomainEngine` for signals, contract selection, risk, execution, and exits.
+
+`verify:history` fetches Alpaca historical stock bars plus selected 0DTE option bars/trades, computes per-timestamp Black-Scholes IV/Greeks, writes a replayable JSONL event log, and runs that event stream through the shared production domain engine.
+
+Historical verification must not fork strategy behavior. The production decision path is `DomainEngine` plus `SignalEngine`, `ContractSelector`, `RiskEngine`, `ExecutionPolicy`, and `PositionManager`; both live trading and replay call that same path. Replay-only code is limited to historical data loading, converting historical bars/trades into the same event schema used by live streams, simulated broker fills, and reporting.
+
+Risk caps such as `max_loss_per_trade_dollars`, `max_trades_per_day`, and `max_open_positions` accept `null` to disable that cap. The default configs use uncapped trade count/position sizing gates while keeping session, stale-data, spread, kill-switch, and long-options-only protections active.
 
 ## Project Layout
 

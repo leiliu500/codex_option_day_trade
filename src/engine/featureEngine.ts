@@ -13,6 +13,7 @@ export interface UnderlyingFeatures {
   vwap?: number;
   opening_range_high?: number;
   opening_range_low?: number;
+  opening_range_bps?: number;
   session_high?: number;
   session_low?: number;
   quote_age_seconds: number;
@@ -36,6 +37,10 @@ export class FeatureEngine {
       vwap: underlying?.vwap,
       opening_range_high: underlying?.opening_range_high,
       opening_range_low: underlying?.opening_range_low,
+      opening_range_bps:
+        underlying?.opening_range_high !== undefined && underlying.opening_range_low !== undefined && underlying.last_price !== undefined
+          ? ((underlying.opening_range_high - underlying.opening_range_low) / underlying.last_price) * 10_000
+          : undefined,
       session_high: underlying?.session_high,
       session_low: underlying?.session_low,
       quote_age_seconds: secondsBetweenIso(underlying?.last_received_at_utc, nowIso),

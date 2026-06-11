@@ -1,4 +1,4 @@
-import type { AppConfig } from "../config/config";
+import { isRiskLimitEnabled, type AppConfig } from "../config/config";
 import type { MarketDataAdapter, TradingAdapter } from "../broker/protocols";
 import type { EventStore } from "../data/eventStore";
 import type { EventFactory } from "../domain/events";
@@ -156,7 +156,13 @@ export class LiveSessionController {
       throw new Error("Alpaca account is not approved for long option day trades.");
     }
     const buyingPower = Number(account.buying_power ?? account.regt_buying_power ?? 0);
-    if (!Number.isFinite(buyingPower) || buyingPower < this.config.risk.max_loss_per_trade_dollars) {
+    if (!Number.isFinite(buyingPower) || buyingPower <= 0) {
+      throw new Error("Insufficient buying power for option day trades.");
+    }
+    if (
+      isRiskLimitEnabled(this.config.risk.max_loss_per_trade_dollars) &&
+      buyingPower < this.config.risk.max_loss_per_trade_dollars
+    ) {
       throw new Error("Insufficient buying power for configured max loss per trade.");
     }
   }

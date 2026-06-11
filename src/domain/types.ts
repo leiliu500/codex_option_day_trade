@@ -164,6 +164,7 @@ export interface PositionState {
   avg_entry_price: number;
   opened_at_utc: string;
   last_mark_price?: number;
+  highest_mark_price?: number;
   unrealized_pnl?: number;
   realized_pnl?: number;
   stop_loss_price?: number;

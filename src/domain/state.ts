@@ -280,6 +280,7 @@ export class LiveState {
         avg_entry_price: avg,
         opened_at_utc: existing?.opened_at_utc ?? at,
         last_mark_price: fillPrice,
+        highest_mark_price: Math.max(fillPrice, existing?.highest_mark_price ?? fillPrice),
         unrealized_pnl: 0,
         realized_pnl: existing?.realized_pnl ?? 0,
         stop_loss_price: avg * (1 - this.config.exit.stop_loss_pct),
@@ -304,6 +305,7 @@ export class LiveState {
           ...existing,
           qty: 0,
           last_mark_price: fillPrice,
+          highest_mark_price: Math.max(fillPrice, existing.highest_mark_price ?? fillPrice),
           realized_pnl: (existing.realized_pnl ?? 0) + realized,
           unrealized_pnl: 0,
           status: "closed",
@@ -313,6 +315,7 @@ export class LiveState {
           ...existing,
           qty: remainingQty,
           last_mark_price: fillPrice,
+          highest_mark_price: Math.max(fillPrice, existing.highest_mark_price ?? fillPrice),
           realized_pnl: (existing.realized_pnl ?? 0) + realized,
           status: "open",
         });
@@ -330,6 +333,7 @@ export class LiveState {
         continue;
       }
       position.last_mark_price = mark;
+      position.highest_mark_price = Math.max(mark, position.highest_mark_price ?? position.avg_entry_price);
       position.unrealized_pnl = (mark - position.avg_entry_price) * position.qty * 100;
     }
   }

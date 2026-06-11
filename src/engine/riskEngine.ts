@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AppConfig } from "../config/config";
+import { isRiskLimitEnabled, type AppConfig } from "../config/config";
 import type { LiveState } from "../domain/state";
 import type { RiskDecision, TradeAction } from "../domain/types";
 import { optionMid } from "../domain/types";
@@ -58,17 +58,27 @@ export class RiskEngine {
       }
       if (
         this.config.risk.block_new_entries_after_daily_loss &&
+        isRiskLimitEnabled(this.config.risk.max_daily_loss_dollars) &&
         state.dailyRealizedPnl <= -this.config.risk.max_daily_loss_dollars
       ) {
         blocked.push("daily_max_loss_breached");
       }
-      if (state.getOpenPositions().length >= this.config.risk.max_open_positions) {
+      if (
+        isRiskLimitEnabled(this.config.risk.max_open_positions) &&
+        state.getOpenPositions().length >= this.config.risk.max_open_positions
+      ) {
         blocked.push("max_open_positions_reached");
       }
-      if (state.getOpenOrders().length >= this.config.risk.max_open_orders) {
+      if (
+        isRiskLimitEnabled(this.config.risk.max_open_orders) &&
+        state.getOpenOrders().length >= this.config.risk.max_open_orders
+      ) {
         blocked.push("max_open_orders_reached");
       }
-      if (state.tradesToday >= this.config.risk.max_trades_per_day) {
+      if (
+        isRiskLimitEnabled(this.config.risk.max_trades_per_day) &&
+        state.tradesToday >= this.config.risk.max_trades_per_day
+      ) {
         blocked.push("max_trades_per_day_reached");
       }
       this.evaluateRequiredStreams(state, nowIso, blocked, rules);
@@ -86,23 +96,37 @@ export class RiskEngine {
       }
     }
 
-    if (!quote || quote.bid === undefined || quote.ask === undefined || quote.bid <= 0 || quote.ask <= quote.bid || mid === undefined) {
-      blocked.push("bid_ask_invalid");
-    }
-    if (quoteAge > this.config.stream.max_quote_age_seconds) {
-      blocked.push("option_quote_stale");
-    }
-    if (spreadPct !== undefined && spreadPct > this.config.contract_selector.max_spread_pct_of_mid) {
-      blocked.push("spread_too_wide");
+    if (isClose) {
+      if (action.limit_price === undefined || action.limit_price <= 0) {
+        blocked.push("close_price_missing");
+      }
+    } else {
+      if (!quote || quote.bid === undefined || quote.ask === undefined || quote.bid <= 0 || quote.ask <= quote.bid || mid === undefined) {
+        blocked.push("bid_ask_invalid");
+      }
+      if (quoteAge > this.config.stream.max_quote_age_seconds) {
+        blocked.push("option_quote_stale");
+      }
+      if (spreadPct !== undefined && spreadPct > this.config.contract_selector.max_spread_pct_of_mid) {
+        blocked.push("spread_too_wide");
+      }
     }
     const contract = state.contracts.get(leg.symbol);
     if (contract?.status && contract.status !== "active") {
       blocked.push("contract_not_active");
     }
-    if (!isClose && action.max_loss_dollars > this.config.risk.max_loss_per_trade_dollars) {
+    if (
+      !isClose &&
+      isRiskLimitEnabled(this.config.risk.max_loss_per_trade_dollars) &&
+      action.max_loss_dollars > this.config.risk.max_loss_per_trade_dollars
+    ) {
       blocked.push("max_loss_per_trade_exceeded");
     }
-    if (!isClose && action.max_loss_dollars > this.config.risk.max_position_notional_dollars) {
+    if (
+      !isClose &&
+      isRiskLimitEnabled(this.config.risk.max_position_notional_dollars) &&
+      action.max_loss_dollars > this.config.risk.max_position_notional_dollars
+    ) {
       blocked.push("max_position_notional_exceeded");
     }
 

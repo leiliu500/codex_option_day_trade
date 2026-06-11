@@ -37,6 +37,13 @@ export class SignalEngine {
     if (feature.opening_range_high === undefined || feature.opening_range_low === undefined) {
       reasonCodes.push("missing_opening_range");
     }
+    if (
+      feature.opening_range_bps !== undefined &&
+      this.config.strategy.max_opening_range_bps !== null &&
+      feature.opening_range_bps > this.config.strategy.max_opening_range_bps
+    ) {
+      reasonCodes.push("opening_range_too_wide");
+    }
 
     const canEvaluate =
       reasonCodes.length === 0 &&
@@ -47,22 +54,29 @@ export class SignalEngine {
 
     if (canEvaluate) {
       const momentum = feature.short_momentum_bps;
+      const bullishBreakoutBps = ((feature.price! - feature.opening_range_high!) / feature.opening_range_high!) * 10_000;
+      const bearishBreakoutBps = ((feature.opening_range_low! - feature.price!) / feature.opening_range_low!) * 10_000;
+      const vwapDistanceBps = ((feature.price! - feature.vwap!) / feature.vwap!) * 10_000;
       if (
         feature.price! > feature.vwap! &&
         feature.price! > feature.opening_range_high! &&
+        bullishBreakoutBps >= this.config.strategy.min_breakout_bps &&
+        vwapDistanceBps >= this.config.strategy.min_vwap_distance_bps &&
         momentum >= this.config.strategy.min_underlying_momentum_bps
       ) {
         direction = "bullish";
-        reasonCodes.push("price_above_vwap", "opening_range_breakout_high", "positive_short_momentum");
-        confidence = Math.min(0.95, 0.55 + Math.abs(momentum) / 1000);
+        reasonCodes.push("price_above_vwap", "opening_range_breakout_high", "positive_short_momentum", "breakout_confirmed");
+        confidence = Math.min(0.95, 0.5 + Math.abs(momentum) / 800 + bullishBreakoutBps / 1000);
       } else if (
         feature.price! < feature.vwap! &&
         feature.price! < feature.opening_range_low! &&
+        bearishBreakoutBps >= this.config.strategy.min_breakout_bps &&
+        -vwapDistanceBps >= this.config.strategy.min_vwap_distance_bps &&
         momentum <= -this.config.strategy.min_underlying_momentum_bps
       ) {
         direction = "bearish";
-        reasonCodes.push("price_below_vwap", "opening_range_breakout_low", "negative_short_momentum");
-        confidence = Math.min(0.95, 0.55 + Math.abs(momentum) / 1000);
+        reasonCodes.push("price_below_vwap", "opening_range_breakout_low", "negative_short_momentum", "breakout_confirmed");
+        confidence = Math.min(0.95, 0.5 + Math.abs(momentum) / 800 + bearishBreakoutBps / 1000);
       } else {
         reasonCodes.push("no_opening_range_breakout");
       }

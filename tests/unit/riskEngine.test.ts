@@ -7,9 +7,9 @@ import type { TradeAction } from "../../src/domain/types";
 
 test("risk gate blocks stale option quote before order submission", () => {
   const { config, configHash } = loadConfig("configs/paper.yaml");
-  const state = healthyState(config, "2026-06-11T14:00:00.000Z", "2026-06-11T13:59:00.000Z");
-  const action = openAction("2026-06-11T14:00:00.000Z");
-  const decision = new RiskEngine(config, configHash).evaluate(action, state, "2026-06-11T14:00:00.000Z");
+  const state = healthyState(config, "2026-06-11T14:15:00.000Z", "2026-06-11T14:14:00.000Z");
+  const action = openAction("2026-06-11T14:15:00.000Z");
+  const decision = new RiskEngine(config, configHash).evaluate(action, state, "2026-06-11T14:15:00.000Z");
   assert.equal(decision.approved, false);
   assert.ok(decision.blocked_reasons.includes("option_quote_stale"));
 });
@@ -34,7 +34,7 @@ test("risk gate blocks opening trades during the last 30 minutes before market c
 
 test("risk gate blocks v1 short option opening legs", () => {
   const { config, configHash } = loadConfig("configs/paper.yaml");
-  const now = "2026-06-11T14:00:00.000Z";
+  const now = "2026-06-11T14:15:00.000Z";
   const state = healthyState(config, now, now);
   const action = openAction(now);
   action.legs[0].side = "sell";
@@ -42,6 +42,48 @@ test("risk gate blocks v1 short option opening legs", () => {
   const decision = new RiskEngine(config, configHash).evaluate(action, state, now);
   assert.equal(decision.approved, false);
   assert.ok(decision.blocked_reasons.includes("naked_or_short_option_not_allowed"));
+});
+
+test("risk gate treats null risk caps as unlimited for otherwise valid long option entries", () => {
+  const { config, configHash } = loadConfig("configs/paper.yaml");
+  const now = "2026-06-11T14:15:00.000Z";
+  const state = healthyState(config, now, now);
+  state.tradesToday = 100;
+  state.positions.set("SPY260611P00100000", {
+    symbol: "SPY260611P00100000",
+    underlying_symbol: "SPY",
+    strategy_type: "long_put",
+    qty: 25,
+    avg_entry_price: 3.5,
+    opened_at_utc: now,
+    force_flatten_at_utc: "2026-06-11T19:30:00.000Z",
+    status: "open",
+  });
+  const action = openAction(now);
+  action.limit_price = 3.72;
+  action.max_loss_dollars = 372;
+
+  const decision = new RiskEngine(config, configHash).evaluate(action, state, now);
+
+  assert.equal(decision.approved, true);
+  assert.deepEqual(decision.blocked_reasons, []);
+});
+
+test("risk gate allows stale-quote close actions when a fallback limit price is available", () => {
+  const { config, configHash } = loadConfig("configs/paper.yaml");
+  const now = "2026-06-11T14:15:00.000Z";
+  const state = healthyState(config, now, "2026-06-11T13:59:00.000Z");
+  const action = openAction(now);
+  action.action_type = "close";
+  action.legs[0].side = "sell";
+  action.legs[0].position_intent = "sell_to_close";
+  action.limit_price = 0.9;
+  action.max_loss_dollars = 0;
+
+  const decision = new RiskEngine(config, configHash).evaluate(action, state, now);
+
+  assert.equal(decision.approved, true);
+  assert.equal(decision.blocked_reasons.includes("option_quote_stale"), false);
 });
 
 function healthyState(config: ReturnType<typeof loadConfig>["config"], nowIso: string, optionQuoteIso: string): LiveState {

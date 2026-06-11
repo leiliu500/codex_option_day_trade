@@ -3,6 +3,8 @@ import { sha256 } from "../util/hash";
 import { clockMinusMinutes, clockPlusMinutes } from "../util/time";
 import type { TradingMode } from "../domain/types";
 
+export type RiskLimit = number | null;
+
 export interface AppConfig {
   system: {
     name: string;
@@ -24,6 +26,7 @@ export interface AppConfig {
   session: {
     regular_open_et: string;
     regular_close_et: string;
+    entry_start_buffer_minutes: number;
     start_streams_at_et: string;
     first_entry_time_et: string;
     last_entry_time_et: string;
@@ -54,7 +57,13 @@ export interface AppConfig {
     enabled: boolean;
     name: string;
     opening_range_minutes: number;
+    max_opening_range_bps: number | null;
     min_underlying_momentum_bps: number;
+    min_breakout_bps: number;
+    min_vwap_distance_bps: number;
+    entry_cooldown_seconds: number;
+    min_new_move_bps: number;
+    entry_confirmation_seconds: number;
     require_vwap_alignment: boolean;
   };
   contract_selector: {
@@ -69,12 +78,12 @@ export interface AppConfig {
     prefer_near_the_money: boolean;
   };
   risk: {
-    max_loss_per_trade_dollars: number;
-    max_daily_loss_dollars: number;
-    max_trades_per_day: number;
-    max_open_positions: number;
-    max_open_orders: number;
-    max_position_notional_dollars: number;
+    max_loss_per_trade_dollars: RiskLimit;
+    max_daily_loss_dollars: RiskLimit;
+    max_trades_per_day: RiskLimit;
+    max_open_positions: RiskLimit;
+    max_open_orders: RiskLimit;
+    max_position_notional_dollars: RiskLimit;
     block_new_entries_after_daily_loss: boolean;
     block_new_entries_after_rejects: number;
     block_if_broker_reconciliation_mismatch: boolean;
@@ -92,7 +101,11 @@ export interface AppConfig {
   exit: {
     take_profit_pct: number;
     stop_loss_pct: number;
+    breakeven_trigger_pct: number;
+    trailing_stop_activation_pct: number;
+    trailing_stop_pct: number;
     time_stop_minutes: number;
+    defer_loss_exits_while_underlying_trend_valid: boolean;
     exit_on_signal_reversal: boolean;
     force_flatten_before_close: boolean;
   };
@@ -131,6 +144,7 @@ export const defaultConfig: AppConfig = {
   session: {
     regular_open_et: "09:30:00",
     regular_close_et: "16:00:00",
+    entry_start_buffer_minutes: 45,
     start_streams_at_et: "09:20:00",
     first_entry_time_et: "10:00:00",
     last_entry_time_et: "15:30:00",
@@ -161,7 +175,13 @@ export const defaultConfig: AppConfig = {
     enabled: true,
     name: "orb_vwap_long_options",
     opening_range_minutes: 5,
-    min_underlying_momentum_bps: 5,
+    max_opening_range_bps: 25,
+    min_underlying_momentum_bps: 15,
+    min_breakout_bps: 6,
+    min_vwap_distance_bps: 5,
+    entry_cooldown_seconds: 600,
+    min_new_move_bps: 25,
+    entry_confirmation_seconds: 0,
     require_vwap_alignment: true,
   },
   contract_selector: {
@@ -176,12 +196,12 @@ export const defaultConfig: AppConfig = {
     prefer_near_the_money: true,
   },
   risk: {
-    max_loss_per_trade_dollars: 100,
-    max_daily_loss_dollars: 300,
-    max_trades_per_day: 5,
-    max_open_positions: 1,
-    max_open_orders: 1,
-    max_position_notional_dollars: 500,
+    max_loss_per_trade_dollars: null,
+    max_daily_loss_dollars: null,
+    max_trades_per_day: null,
+    max_open_positions: null,
+    max_open_orders: null,
+    max_position_notional_dollars: null,
     block_new_entries_after_daily_loss: true,
     block_new_entries_after_rejects: 2,
     block_if_broker_reconciliation_mismatch: true,
@@ -197,9 +217,13 @@ export const defaultConfig: AppConfig = {
     client_order_id_prefix: "lotd",
   },
   exit: {
-    take_profit_pct: 0.25,
-    stop_loss_pct: 0.15,
-    time_stop_minutes: 20,
+    take_profit_pct: 0.6,
+    stop_loss_pct: 0.12,
+    breakeven_trigger_pct: 0.12,
+    trailing_stop_activation_pct: 0.2,
+    trailing_stop_pct: 0.1,
+    time_stop_minutes: 10,
+    defer_loss_exits_while_underlying_trend_valid: true,
     exit_on_signal_reversal: true,
     force_flatten_before_close: true,
   },
@@ -249,11 +273,16 @@ export function assertSafeTradingMode(
   return "paper";
 }
 
+export function isRiskLimitEnabled(limit: RiskLimit): limit is number {
+  return typeof limit === "number" && Number.isFinite(limit) && limit > 0;
+}
+
 function normalizeConfig(config: AppConfig): void {
   config.watchlist.underlyings = config.watchlist.underlyings.map((symbol) => symbol.toUpperCase());
   config.universe.dte_min = 0;
   config.universe.dte_max = 0;
-  config.session.first_entry_time_et = clockPlusMinutes(config.session.regular_open_et, 30);
+  config.session.entry_start_buffer_minutes = Math.max(30, Math.floor(config.session.entry_start_buffer_minutes));
+  config.session.first_entry_time_et = clockPlusMinutes(config.session.regular_open_et, config.session.entry_start_buffer_minutes);
   config.session.last_entry_time_et = clockMinusMinutes(config.session.regular_close_et, 30);
   config.session.force_flatten_time_et = clockMinusMinutes(config.session.regular_close_et, 30);
   if (config.execution.order_type !== "limit" || config.execution.time_in_force !== "day") {
@@ -262,8 +291,15 @@ function normalizeConfig(config: AppConfig): void {
 }
 
 function deepMerge(base: unknown, patch: unknown): unknown {
-  if (Array.isArray(base) || Array.isArray(patch) || typeof base !== "object" || typeof patch !== "object") {
-    return patch ?? base;
+  if (
+    base === null ||
+    patch === null ||
+    Array.isArray(base) ||
+    Array.isArray(patch) ||
+    typeof base !== "object" ||
+    typeof patch !== "object"
+  ) {
+    return patch === undefined ? base : patch;
   }
   const output: Record<string, unknown> = { ...(base as Record<string, unknown>) };
   for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {

@@ -11,7 +11,9 @@
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/tests/unit/*.test.js",
     "replay:fixture": "npm run build && node dist/src/cli.js replay-fixture tests/replay_fixtures/02_bullish_signal_risk_approved_order_submitted.jsonl --config configs/paper.yaml",
-    "check:config": "npm run build && node dist/src/cli.js run --config configs/paper.yaml --paper --dry-run"
+    "check:config": "npm run build && node dist/src/cli.js run --config configs/paper.yaml --paper --dry-run",
+    "verify:history": "npm run build && node dist/src/scripts/verify-history.js",
+    "optimize": "npm run build && node dist/src/scripts/optimize.js"
   },
   "engines": {
     "node": ">=22"

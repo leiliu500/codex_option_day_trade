@@ -19,6 +19,7 @@ watchlist:
 session:
   regular_open_et: "09:30:00"
   regular_close_et: "16:00:00"
+  entry_start_buffer_minutes: 45
   start_streams_at_et: "09:20:00"
   first_entry_time_et: "10:00:00"
   last_entry_time_et: "15:30:00"
@@ -49,7 +50,13 @@ strategy:
   enabled: true
   name: orb_vwap_long_options
   opening_range_minutes: 5
-  min_underlying_momentum_bps: 5
+  max_opening_range_bps: 25
+  min_underlying_momentum_bps: 15
+  min_breakout_bps: 6
+  min_vwap_distance_bps: 5
+  entry_cooldown_seconds: 600
+  min_new_move_bps: 25
+  entry_confirmation_seconds: 0
   require_vwap_alignment: true
 
 contract_selector:
@@ -64,12 +71,12 @@ contract_selector:
   prefer_near_the_money: true
 
 risk:
-  max_loss_per_trade_dollars: 100
-  max_daily_loss_dollars: 300
-  max_trades_per_day: 5
-  max_open_positions: 1
-  max_open_orders: 1
-  max_position_notional_dollars: 500
+  max_loss_per_trade_dollars: null
+  max_daily_loss_dollars: null
+  max_trades_per_day: null
+  max_open_positions: null
+  max_open_orders: null
+  max_position_notional_dollars: null
   block_new_entries_after_daily_loss: true
   block_new_entries_after_rejects: 2
   block_if_broker_reconciliation_mismatch: true
@@ -85,9 +92,13 @@ execution:
   client_order_id_prefix: lotd
 
 exit:
-  take_profit_pct: 0.25
-  stop_loss_pct: 0.15
-  time_stop_minutes: 20
+  take_profit_pct: 0.6
+  stop_loss_pct: 0.12
+  breakeven_trigger_pct: 0.12
+  trailing_stop_activation_pct: 0.2
+  trailing_stop_pct: 0.1
+  time_stop_minutes: 10
+  defer_loss_exits_while_underlying_trend_valid: true
   exit_on_signal_reversal: true
   force_flatten_before_close: true
 
