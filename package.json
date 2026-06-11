@@ -1,0 +1,26 @@
+{
+  "name": "codex-option-day-trade",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Event-driven Alpaca option day-trading workflow with deterministic replay verification.",
+  "type": "commonjs",
+  "bin": {
+    "lotd": "dist/src/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/tests/unit/*.test.js",
+    "replay:fixture": "npm run build && node dist/src/cli.js replay-fixture tests/replay_fixtures/02_bullish_signal_risk_approved_order_submitted.jsonl --config configs/paper.yaml",
+    "check:config": "npm run build && node dist/src/cli.js run --config configs/paper.yaml --paper --dry-run"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.1.3"
+  }
+}
